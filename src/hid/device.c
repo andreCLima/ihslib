@@ -42,13 +42,22 @@ void IHS_HIDManagedDeviceOpened(IHS_HIDManagedDevice *managed) {
 
 void IHS_HIDManagedDeviceClose(IHS_HIDManagedDevice *managed) {
     assert(managed != NULL);
-    IHS_HIDDevice *device = managed->device;
     assert(managed->manager != NULL);
+    // useLock is held by whoever is inside the device (request worker, poll task, resync), so
+    // the device is never freed under them. `closed` is only changed with it held, which makes
+    // a second Close (event thread racing a Close request from the host) a no-op.
+    IHS_MutexLock(managed->useLock);
+    if (managed->closed) {
+        IHS_MutexUnlock(managed->useLock);
+        return;
+    }
+    IHS_HIDDevice *device = managed->device;
     device->cls->close(device);
     IHS_HIDManagerNotifyDeviceClosed(managed->manager, managed);
     IHS_HIDManagerRemoveClosedDevice(managed->manager, managed);
     device->managed = NULL;
     device->cls->free(device);
+    IHS_MutexUnlock(managed->useLock);
 }
 
 int IHS_HIDDeviceWrite(IHS_HIDDevice *device, const uint8_t *data, size_t dataLen) {
@@ -87,6 +96,8 @@ int IHS_HIDDeviceStartInputReports(IHS_HIDDevice *device, size_t length) {
 }
 
 int IHS_HIDDeviceRequestFullReport(IHS_HIDDevice *device) {
+    // Optional: a provider that cannot produce one has nothing to resync.
+    if (device->cls->requestFullReport == NULL) return -1;
     return device->cls->requestFullReport(device);
 }
 

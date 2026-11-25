@@ -79,11 +79,21 @@ struct IHS_HIDManagedDevice {
     IHS_HIDReportHolder reportHolder;
     IHS_Mutex *lock;
     /**
+     * Held by anyone using `device` (and by Close while it frees it), so it cannot be freed under
+     * them. Take it with IHS_HIDManagerAcquireDevice*; lock order is useLock, then lock.
+     */
+    IHS_Mutex *useLock;
+    /**
      * Set true by IHS_HIDManagerRemoveClosedDevice. Find* skip closed slots; the slot
      * (and this struct) live until IHS_HIDManagerDestroy reclaims them — that keeps every
      * IHS_HIDManagedDevice * stable for the lifetime of the manager.
      */
     bool closed;
+    /**
+     * Whether the provider implements `poll`, kept here because reading it off `device` needs the
+     * device to be alive.
+     */
+    bool pollable;
 };
 
 
@@ -149,3 +159,30 @@ void IHS_HIDManagerStopWorker(IHS_HIDManager *manager);
  * @return true once StopWorker was called. A job that loops can check it to give up early.
  */
 bool IHS_HIDManagerWorkerStopping(IHS_HIDManager *manager);
+
+/**
+ * Find an open device by id and hold its useLock, so it cannot be closed (and its IHS_HIDDevice
+ * freed) until IHS_HIDManagerReleaseDevice. Blocks while another thread is inside it.
+ * @return NULL if there is no such open device; nothing is held then
+ */
+IHS_HIDManagedDevice *IHS_HIDManagerAcquireDeviceByID(IHS_HIDManager *manager, uint32_t id);
+
+/**
+ * Hold the useLock of a device found by other means (a snapshot).
+ * @return false if it was closed; nothing is held then
+ */
+bool IHS_HIDManagerAcquireDevice(IHS_HIDManagedDevice *managed);
+
+void IHS_HIDManagerReleaseDevice(IHS_HIDManagedDevice *managed);
+
+typedef enum IHS_HIDTryAcquire {
+    IHS_HIDTryAcquireOK,
+    IHS_HIDTryAcquireBusy,
+    IHS_HIDTryAcquireClosed,
+} IHS_HIDTryAcquire;
+
+/**
+ * Like IHS_HIDManagerAcquireDevice but never waits: for the timer thread, which also runs the
+ * retransmissions and must not sit behind a read that waits out its timeout. Held only on OK.
+ */
+IHS_HIDTryAcquire IHS_HIDManagerTryAcquireDevice(IHS_HIDManagedDevice *managed);

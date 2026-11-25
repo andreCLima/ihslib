@@ -285,9 +285,10 @@ static void SessionFinalized(IHS_Base *base, void *context) {
         IHS_TimerTaskStopImmediate(session->livenessTask);
         session->livenessTask = NULL;
     }
-    IHS_ThreadJoin(session->sendThread);
-    // Jobs on the HID worker answer through the control channel; none may run past this point.
+    // Before the send thread goes: a job still running answers through it, and must find it there.
+    // None may run past this point, the control channel is next to be torn down.
     IHS_HIDManagerStopWorker(session->hidManager);
+    IHS_ThreadJoin(session->sendThread);
     session->sendThread = NULL;
     if (session->callbacks.session && session->callbacks.session->finalized) {
         session->callbacks.session->finalized(session, session->callbackContexts.session);

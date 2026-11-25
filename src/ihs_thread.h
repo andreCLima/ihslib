@@ -46,6 +46,11 @@ bool IHS_MutexLock(IHS_Mutex *mutex);
 
 bool IHS_MutexUnlock(IHS_Mutex *mutex);
 
+/**
+ * @return true if the mutex was free and is now held by the caller; never blocks
+ */
+bool IHS_MutexTryLock(IHS_Mutex *mutex);
+
 IHS_Cond *IHS_CondCreate();
 
 void IHS_CondDestroy(IHS_Cond *cond);

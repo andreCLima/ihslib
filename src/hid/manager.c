@@ -79,6 +79,7 @@ void IHS_HIDManagerDestroy(IHS_HIDManager *manager) {
         assert(managed->closed);
         IHS_HIDReportHolderDeinit(&managed->reportHolder);
         IHS_MutexDestroy(managed->lock);
+        IHS_MutexDestroy(managed->useLock);
         free(managed);
     }
     IHS_ArrayListDeinit(&manager->devices);
@@ -118,6 +119,8 @@ IHS_HIDManagedDevice *IHS_HIDManagerOpenDevice(IHS_HIDManager *manager, const ch
     managed->manager = manager;
     managed->device = device;
     managed->lock = IHS_MutexCreate();
+    managed->useLock = IHS_MutexCreate();
+    managed->pollable = device->cls->poll != NULL;
     IHS_MutexLock(manager->devicesLock);
     managed->id = ++manager->lastDeviceId;
     IHS_HIDReportHolderInit(&managed->reportHolder, managed->id);
@@ -239,31 +242,32 @@ static uint64_t HIDPollTick(int runCount, void *context) {
     size_t count;
     IHS_HIDManagedDevice **snapshot = IHS_HIDManagerSnapshotOpenDevices(manager, &count);
     bool anyData = false;
+    // Resync on this tick? The counter is only reset once every device was reached, so a device
+    // whose lock was busy (a request in flight) is retried on the next tick.
+    bool resync = ++manager->fullReportTicks >= HID_FULL_REPORT_TICKS;
+    bool resyncDone = true;
     for (size_t i = 0; i < count; ++i) {
         IHS_HIDManagedDevice *managed = snapshot[i];
-        if (managed->device->cls->poll == NULL) continue;
-        IHS_HIDDeviceLock(managed->device);
-        int result = managed->device->cls->poll(managed->device);
-        IHS_HIDDeviceUnlock(managed->device);
+        bool wantsResync = resync;
+        if (!managed->pollable && !wantsResync) continue;
+        // useLock keeps the SDL event thread (device removed) and the HID worker (Close request)
+        // from freeing the device while we use it. Try only: this is the timer thread.
+        IHS_HIDTryAcquire acquired = IHS_HIDManagerTryAcquireDevice(managed);
+        if (acquired == IHS_HIDTryAcquireBusy) {
+            if (wantsResync) resyncDone = false;
+            continue;
+        }
+        if (acquired == IHS_HIDTryAcquireClosed) continue;
+        int result = 0;
+        if (managed->pollable) {
+            IHS_HIDDeviceLock(managed->device);
+            result = managed->device->cls->poll(managed->device);
+            IHS_HIDDeviceUnlock(managed->device);
+        }
         if (result > 0) {
             anyData = true;
-        } else if (result < 0) {
-            IHS_SessionLog(manager->session, IHS_LogLevelInfo, "HID",
-                           "Device id=%u poll failed (%d), closing", managed->id, result);
-            IHS_HIDManagedDeviceClose(managed);
         }
-    }
-    // Periodic resync. The managed struct of a device closed meanwhile stays valid, but its inner
-    // device is freed on close, so skip closed slots first. The window between that check and
-    // the call is the same one the poll above already has with the SDL event thread.
-    if (++manager->fullReportTicks >= HID_FULL_REPORT_TICKS) {
-        manager->fullReportTicks = 0;
-        for (size_t i = 0; i < count; ++i) {
-            IHS_HIDManagedDevice *managed = snapshot[i];
-            IHS_MutexLock(manager->devicesLock);
-            bool closed = managed->closed;
-            IHS_MutexUnlock(manager->devicesLock);
-            if (closed) continue;
+        if (result >= 0 && wantsResync) {
             IHS_MutexLock(managed->lock);
             // Only after the host sent StartInputReports (it sets the length): before that it is
             // not reading this device, and AddFull asserts the length covers the 48-byte state.
@@ -273,6 +277,16 @@ static uint64_t HIDPollTick(int runCount, void *context) {
                 anyData = true;
             }
         }
+        IHS_HIDManagerReleaseDevice(managed);
+        if (result < 0) {
+            IHS_SessionLog(manager->session, IHS_LogLevelInfo, "HID",
+                           "Device id=%u poll failed (%d), closing", managed->id, result);
+            // After the release: Close takes the lock itself.
+            IHS_HIDManagedDeviceClose(managed);
+        }
+    }
+    if (resync && resyncDone) {
+        manager->fullReportTicks = 0;
     }
     free(snapshot);
     if (anyData) {
@@ -366,4 +380,38 @@ bool IHS_HIDManagerWorkerStopping(IHS_HIDManager *manager) {
     bool stopping = manager->workerStop;
     IHS_MutexUnlock(manager->workerLock);
     return stopping;
+}
+
+bool IHS_HIDManagerAcquireDevice(IHS_HIDManagedDevice *managed) {
+    IHS_MutexLock(managed->useLock);
+    // Read under useLock: Close sets it with useLock held, so it cannot flip while we hold it.
+    if (managed->closed) {
+        IHS_MutexUnlock(managed->useLock);
+        return false;
+    }
+    return true;
+}
+
+IHS_HIDManagedDevice *IHS_HIDManagerAcquireDeviceByID(IHS_HIDManager *manager, uint32_t id) {
+    IHS_HIDManagedDevice *managed = IHS_HIDManagerFindDeviceByID(manager, id);
+    // The struct outlives the device (slots are reclaimed in Destroy), so waiting on its lock is safe.
+    if (managed == NULL || !IHS_HIDManagerAcquireDevice(managed)) {
+        return NULL;
+    }
+    return managed;
+}
+
+void IHS_HIDManagerReleaseDevice(IHS_HIDManagedDevice *managed) {
+    IHS_MutexUnlock(managed->useLock);
+}
+
+IHS_HIDTryAcquire IHS_HIDManagerTryAcquireDevice(IHS_HIDManagedDevice *managed) {
+    if (!IHS_MutexTryLock(managed->useLock)) {
+        return IHS_HIDTryAcquireBusy;
+    }
+    if (managed->closed) {
+        IHS_MutexUnlock(managed->useLock);
+        return IHS_HIDTryAcquireClosed;
+    }
+    return IHS_HIDTryAcquireOK;
 }

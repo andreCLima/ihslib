@@ -35,7 +35,6 @@
 #include "ihs_enumeration.h"
 
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 static void HandleDeviceOpen(IHS_SessionChannel *channel, IHS_HIDManager *manager, const CHIDMessageToRemote *message);
@@ -70,17 +69,95 @@ static void HandleDeviceRequestFullReport(IHS_SessionChannel *channel, IHS_HIDMa
 static void HandleDeviceDisconnect(IHS_SessionChannel *channel, IHS_HIDManager *manager,
                                    const CHIDMessageToRemote *message);
 
-static void RunDeviceRead(IHS_HIDManager *manager, void *context);
-
-static void RunDeviceSendFeatureReport(IHS_HIDManager *manager, void *context);
-
 static void InfoFromHID(CHIDDeviceInfo *info, const IHS_HIDDeviceInfo *hid);
 
 static void SendRequestResponse(IHS_SessionChannel *channel, CHIDMessageFromRemote__RequestResponse *response);
 
 static void SendRequestCodeResponse(IHS_SessionChannel *channel, uint32_t requestId, int result);
 
+static void DispatchHIDMsg(IHS_SessionChannel *channel, const CHIDMessageToRemote *message);
+
+/*
+ * Every HID request is handled on the HID manager's worker, in the order it arrived, not on the
+ * thread that receives packets. Reads wait up to a timeout and feature reports retry for ~100 ms
+ * (always, with the SDL provider), and while they ran here no ACK went out and no packet was
+ * read. Queueing only those two would let a later Close, handled here, free the device under the
+ * worker; queueing all keeps the order Steam sent them in. Responses carry the request_id, so
+ * they need not come in order with other traffic.
+ */
+typedef struct HIDMessageJob {
+    size_t len;
+    uint8_t data[];
+} HIDMessageJob;
+
+static void RunHIDMessage(IHS_HIDManager *manager, void *context);
+
 void IHS_SessionChannelControlOnHIDMsg(IHS_SessionChannel *channel, const CHIDMessageToRemote *message) {
+    IHS_HIDManager *manager = channel->session->hidManager;
+    // The caller frees `message` when this returns, so the job takes a packed copy.
+    size_t len = chidmessage_to_remote__get_packed_size(message);
+    HIDMessageJob *job = malloc(sizeof(HIDMessageJob) + len);
+    if (job == NULL) {
+        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "HID", "Failed to allocate %zu bytes for HID request", len);
+        return;
+    }
+    job->len = len;
+    chidmessage_to_remote__pack(message, job->data);
+    if (!IHS_HIDManagerDefer(manager, RunHIDMessage, job)) {
+        // Worker stopped: the session is ending, nobody is left to answer to.
+        free(job);
+    }
+}
+
+static bool HIDMessageDeviceId(const CHIDMessageToRemote *message, uint32_t *id) {
+    switch (message->command_case) {
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_WRITE: *id = message->device_write->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_READ: *id = message->device_read->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_SEND_FEATURE_REPORT:
+            *id = message->device_send_feature_report->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_FEATURE_REPORT:
+            *id = message->device_get_feature_report->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_VENDOR_STRING:
+            *id = message->device_get_vendor_string->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_PRODUCT_STRING:
+            *id = message->device_get_product_string->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_SERIAL_NUMBER_STRING:
+            *id = message->device_get_serial_number_string->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_START_INPUT_REPORTS:
+            *id = message->device_start_input_reports->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_REQUEST_FULL_REPORT:
+            *id = message->device_request_full_report->device; return true;
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_DISCONNECT:
+            *id = message->device_disconnect->device; return true;
+        default:
+            // Open has no device yet. Close is left out on purpose: it takes the device's lock itself.
+            return false;
+    }
+}
+
+static void RunHIDMessage(IHS_HIDManager *manager, void *context) {
+    const HIDMessageJob *job = context;
+    CHIDMessageToRemote *message = chidmessage_to_remote__unpack(NULL, job->len, job->data);
+    if (message == NULL) {
+        return;
+    }
+    IHS_SessionChannel *channel = IHS_SessionChannelForType(manager->session, IHS_SessionChannelTypeControl);
+    // Hold the device for the whole request: the SDL event thread (device unplugged), the poll
+    // task and Close all take the same lock before they touch or free it. A device already gone
+    // is not held, and the handler then answers "no device" as before.
+    IHS_HIDManagedDevice *held = NULL;
+    uint32_t deviceId;
+    if (HIDMessageDeviceId(message, &deviceId)) {
+        held = IHS_HIDManagerAcquireDeviceByID(manager, deviceId);
+    }
+    DispatchHIDMsg(channel, message);
+    if (held != NULL) {
+        IHS_HIDManagerReleaseDevice(held);
+    }
+    chidmessage_to_remote__free_unpacked(message, NULL);
+}
+
+static void DispatchHIDMsg(IHS_SessionChannel *channel, const CHIDMessageToRemote *message) {
     IHS_HIDManager *manager = channel->session->hidManager;
     switch (message->command_case) {
         case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_OPEN: {
@@ -333,70 +410,20 @@ static void HandleDeviceWrite(IHS_SessionChannel *channel, IHS_HIDManager *manag
                    cmd->device, ret);
 }
 
-/*
- * Reads (which wait up to a timeout) and feature reports (which retry for ~100 ms) used to run
- * right here, on the thread that receives packets: for that time no ACK went out and no video
- * came in. They now run on the HID manager's worker, in the order they arrived. The host matches
- * responses by request_id, so a response may come after ones answered inline.
- */
-typedef struct HIDRequestJob {
-    uint32_t requestId;
-    uint32_t device;
-    uint32_t length;
-    int32_t timeoutMs;
-    size_t dataLen;
-    uint8_t data[];
-} HIDRequestJob;
-
-static HIDRequestJob *HIDRequestJobCreate(const CHIDMessageToRemote *message, uint32_t device, const uint8_t *data,
-                                          size_t dataLen) {
-    HIDRequestJob *job = malloc(sizeof(HIDRequestJob) + dataLen);
-    if (job == NULL) {
-        return NULL;
-    }
-    job->requestId = message->request_id;
-    job->device = device;
-    job->length = 0;
-    job->timeoutMs = 0;
-    job->dataLen = dataLen;
-    if (dataLen > 0) {
-        memcpy(job->data, data, dataLen);
-    }
-    return job;
-}
-
 static void HandleDeviceRead(IHS_SessionChannel *channel, IHS_HIDManager *manager, const CHIDMessageToRemote *message) {
     CHIDMessageToRemote__DeviceRead *cmd = message->device_read;
-    HIDRequestJob *job = HIDRequestJobCreate(message, cmd->device, NULL, 0);
-    if (job == NULL) {
-        SendRequestCodeResponse(channel, message->request_id, -1);
-        return;
-    }
-    job->length = cmd->length;
-    job->timeoutMs = cmd->timeout_ms;
-    if (!IHS_HIDManagerDefer(manager, RunDeviceRead, job)) {
-        // The worker is stopped (the session is ending) or would not start. Answer, so the host
-        // does not wait for a response that never comes.
-        free(job);
-        SendRequestCodeResponse(channel, message->request_id, -1);
-    }
-}
-
-static void RunDeviceRead(IHS_HIDManager *manager, void *context) {
-    const HIDRequestJob *cmd = context;
-    IHS_SessionChannel *channel = IHS_SessionChannelForType(manager->session, IHS_SessionChannelTypeControl);
     IHS_HIDManagedDevice *managed = IHS_HIDManagerFindDeviceByID(manager, cmd->device);
     if (managed == NULL) {
-        SendRequestCodeResponse(channel, cmd->requestId, -1);
+        SendRequestCodeResponse(channel, message->request_id, -1);
         IHS_SessionLog(channel->session, IHS_LogLevelVerbose, "HID", "Message %u: Read(id=%u) => (no device)",
-                       cmd->requestId, cmd->device);
+                       message->request_id, cmd->device);
         return;
     }
     IHS_Buffer str = IHS_BUFFER_INIT(cmd->length, 255);
-    int result = IHS_HIDDeviceRead(managed->device, &str, cmd->length, cmd->timeoutMs);
+    int result = IHS_HIDDeviceRead(managed->device, &str, cmd->length, cmd->timeout_ms);
 
     CHIDMessageFromRemote__RequestResponse response = CHIDMESSAGE_FROM_REMOTE__REQUEST_RESPONSE__INIT;
-    PROTOBUF_C_SET_VALUE(response, request_id, cmd->requestId);
+    PROTOBUF_C_SET_VALUE(response, request_id, message->request_id);
     PROTOBUF_C_SET_VALUE(response, result, result);
     if (result == 0) {
         response.has_data = true;
@@ -404,7 +431,7 @@ static void RunDeviceRead(IHS_HIDManager *manager, void *context) {
         response.data.len = str.size;
     }
     IHS_SessionLog(channel->session, IHS_LogLevelVerbose, "HID", "Message %u: Read(id=%u) => ret=%d, %u byte(s)",
-                   cmd->requestId, cmd->device, response.result, response.data.len);
+                   message->request_id, cmd->device, response.result, response.data.len);
     SendRequestResponse(channel, &response);
     IHS_BufferClear(&str, true);
 }
@@ -412,26 +439,11 @@ static void RunDeviceRead(IHS_HIDManager *manager, void *context) {
 static void HandleDeviceSendFeatureReport(IHS_SessionChannel *channel, IHS_HIDManager *manager,
                                           const CHIDMessageToRemote *message) {
     CHIDMessageToRemote__DeviceSendFeatureReport *cmd = message->device_send_feature_report;
-    HIDRequestJob *job = HIDRequestJobCreate(message, cmd->device, cmd->data.data, cmd->data.len);
-    if (job == NULL) {
-        return;
-    }
-    if (!IHS_HIDManagerDefer(manager, RunDeviceSendFeatureReport, job)) {
-        // No response to give: the host expects none for a feature report.
-        IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID",
-                       "Message %u: SendFeatureReport(id=%u) dropped, HID worker stopped", message->request_id,
-                       cmd->device);
-        free(job);
-    }
-}
-
-static void RunDeviceSendFeatureReport(IHS_HIDManager *manager, void *context) {
-    const HIDRequestJob *cmd = context;
-    IHS_Session *session = manager->session;
     IHS_HIDManagedDevice *managed = IHS_HIDManagerFindDeviceByID(manager, cmd->device);
     if (managed == NULL) {
-        IHS_SessionLog(session, IHS_LogLevelVerbose, "HID", "Message %u: SendFeatureReport(id=%u) => (no device)",
-                       cmd->requestId, cmd->device);
+        IHS_SessionLog(channel->session, IHS_LogLevelVerbose, "HID",
+                       "Message %u: SendFeatureReport(id=%u) => (no device)",
+                       message->request_id, cmd->device);
         return;
     }
     // Mirrors Steam's case 6 in CStreamPlayer::OnRemoteHIDMessage (0x228a64):
@@ -439,16 +451,14 @@ static void RunDeviceSendFeatureReport(IHS_HIDManager *manager, void *context) {
     // LED commands from transient HID write failures (busy device, USB hiccup).
     int ret = -1;
     for (int attempt = 0; attempt < 50; attempt++) {
-        ret = IHS_HIDDeviceSendFeatureReport(managed->device, cmd->data, cmd->dataLen);
+        ret = IHS_HIDDeviceSendFeatureReport(managed->device, cmd->data.data, cmd->data.len);
         if (ret >= 0) break;
-        // Not for a stopping session: Stop waits for this job, and 100 ms is a long time to hold a join.
-        if (IHS_HIDManagerWorkerStopping(manager)) break;
         usleep(2000);
     }
     if (ret < 0) {
-        IHS_SessionLog(session, IHS_LogLevelWarn, "HID",
+        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "HID",
                        "Message %u: SendFeatureReport(id=%u) failed after 50 attempts: %d",
-                       cmd->requestId, cmd->device, ret);
+                       message->request_id, cmd->device, ret);
     }
 }
 
