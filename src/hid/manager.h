@@ -59,6 +59,17 @@ struct IHS_HIDManager {
      * Poll ticks since the last periodic full report. Only the poll task touches it.
      */
     uint32_t fullReportTicks;
+    /**
+     * Worker for HID requests that can block (reads with a timeout, feature reports that retry),
+     * so they do not hold up the thread that receives packets. Jobs run in the order they were
+     * deferred. Started on the first IHS_HIDManagerDefer; stopped by IHS_HIDManagerStopWorker.
+     */
+    IHS_Thread *worker;
+    IHS_Mutex *workerLock;
+    IHS_Cond *workerCond;
+    struct IHS_HIDJob *jobsHead;
+    struct IHS_HIDJob *jobsTail;
+    bool workerStop;
 };
 
 struct IHS_HIDManagedDevice {
@@ -113,3 +124,28 @@ void IHS_HIDManagerRemoveProvider(IHS_HIDManager *manager, IHS_HIDProvider *prov
  * traversal of `manager->devices` would race with concurrent Open/Close on other threads.
  */
 IHS_HIDManagedDevice **IHS_HIDManagerSnapshotOpenDevices(IHS_HIDManager *manager, size_t *count);
+
+
+/**
+ * Runs on the HID worker thread. Owns nothing: the manager frees \p job after it returns.
+ */
+typedef void (IHS_HIDJobFunction)(IHS_HIDManager *manager, void *job);
+
+/**
+ * Queue \p job (malloc'd, freed by the manager with free()) to run \p function on the HID worker,
+ * after every job deferred before it.
+ * @return false if the worker is stopped or could not start; the job is then NOT taken, and the
+ * caller frees it.
+ */
+bool IHS_HIDManagerDefer(IHS_HIDManager *manager, IHS_HIDJobFunction *function, void *job);
+
+/**
+ * Stop the worker: the running job finishes, queued ones are dropped, and later Defer calls fail.
+ * Must run before the control channel is destroyed, since jobs answer through it. Idempotent.
+ */
+void IHS_HIDManagerStopWorker(IHS_HIDManager *manager);
+
+/**
+ * @return true once StopWorker was called. A job that loops can check it to give up early.
+ */
+bool IHS_HIDManagerWorkerStopping(IHS_HIDManager *manager);

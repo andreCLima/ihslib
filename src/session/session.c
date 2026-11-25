@@ -119,6 +119,8 @@ void IHS_SessionThreadedJoin(IHS_Session *session) {
 }
 
 void IHS_SessionDestroy(IHS_Session *session) {
+    // Normally stopped when the session finalized; this covers a session destroyed without running.
+    IHS_HIDManagerStopWorker(session->hidManager);
     for (int i = 0; i < session->numChannels; ++i) {
         IHS_SessionChannelDestroy(session->channels[i]);
     }
@@ -284,6 +286,8 @@ static void SessionFinalized(IHS_Base *base, void *context) {
         session->livenessTask = NULL;
     }
     IHS_ThreadJoin(session->sendThread);
+    // Jobs on the HID worker answer through the control channel; none may run past this point.
+    IHS_HIDManagerStopWorker(session->hidManager);
     session->sendThread = NULL;
     if (session->callbacks.session && session->callbacks.session->finalized) {
         session->callbacks.session->finalized(session, session->callbackContexts.session);

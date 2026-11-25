@@ -51,10 +51,14 @@ IHS_HIDManager *IHS_HIDManagerCreate() {
     IHS_ArrayListInit(&manager->devices, sizeof(IHS_HIDManagedDevice *));
     IHS_ArrayListInit(&manager->inputReports, sizeof(IHS_HIDDeviceReportMessage *));
     manager->devicesLock = IHS_MutexCreate();
+    manager->workerLock = IHS_MutexCreate();
+    manager->workerCond = IHS_CondCreate();
     return manager;
 }
 
 void IHS_HIDManagerDestroy(IHS_HIDManager *manager) {
+    // Jobs look devices up and answer through the session, so they must be gone before either.
+    IHS_HIDManagerStopWorker(manager);
     if (manager->pollTimer != NULL) {
         IHS_TimerTaskStop(manager->pollTimer);
         manager->pollTimer = NULL;
@@ -81,6 +85,8 @@ void IHS_HIDManagerDestroy(IHS_HIDManager *manager) {
     IHS_ArrayListDeinit(&manager->providers);
     IHS_ArrayListDeinit(&manager->inputReports);
     IHS_MutexDestroy(manager->devicesLock);
+    IHS_CondDestroy(manager->workerCond);
+    IHS_MutexDestroy(manager->workerLock);
     free(manager);
 }
 
@@ -273,4 +279,91 @@ static uint64_t HIDPollTick(int runCount, void *context) {
         IHS_SessionHIDSendReport(manager->session);
     }
     return HID_POLL_INTERVAL_MS;
+}
+
+typedef struct IHS_HIDJob {
+    struct IHS_HIDJob *next;
+    IHS_HIDJobFunction *function;
+    void *job;
+} IHS_HIDJob;
+
+static void HIDWorkerRun(void *context) {
+    IHS_HIDManager *manager = context;
+    IHS_MutexLock(manager->workerLock);
+    while (!manager->workerStop) {
+        IHS_HIDJob *node = manager->jobsHead;
+        if (node == NULL) {
+            IHS_CondWait(manager->workerCond, manager->workerLock);
+            continue;
+        }
+        manager->jobsHead = node->next;
+        if (manager->jobsHead == NULL) {
+            manager->jobsTail = NULL;
+        }
+        // Unlocked while it runs: a read may wait its whole timeout, and Defer must not wait for it.
+        IHS_MutexUnlock(manager->workerLock);
+        node->function(manager, node->job);
+        free(node->job);
+        free(node);
+        IHS_MutexLock(manager->workerLock);
+    }
+    IHS_MutexUnlock(manager->workerLock);
+}
+
+bool IHS_HIDManagerDefer(IHS_HIDManager *manager, IHS_HIDJobFunction *function, void *job) {
+    IHS_HIDJob *node = calloc(1, sizeof(IHS_HIDJob));
+    if (node == NULL) {
+        return false;
+    }
+    node->function = function;
+    node->job = job;
+    IHS_MutexLock(manager->workerLock);
+    // Lazily started, like the poll timer: sessions without HID requests pay for no thread.
+    if (manager->workerStop || (manager->worker == NULL &&
+                                (manager->worker = IHS_ThreadCreate(HIDWorkerRun, "IHSHid", manager)) == NULL)) {
+        IHS_MutexUnlock(manager->workerLock);
+        free(node);
+        return false;
+    }
+    if (manager->jobsTail != NULL) {
+        manager->jobsTail->next = node;
+    } else {
+        manager->jobsHead = node;
+    }
+    manager->jobsTail = node;
+    IHS_CondSignal(manager->workerCond);
+    IHS_MutexUnlock(manager->workerLock);
+    return true;
+}
+
+void IHS_HIDManagerStopWorker(IHS_HIDManager *manager) {
+    IHS_MutexLock(manager->workerLock);
+    manager->workerStop = true;
+    IHS_Thread *worker = manager->worker;
+    manager->worker = NULL;
+    IHS_CondSignal(manager->workerCond);
+    IHS_MutexUnlock(manager->workerLock);
+    // Outside the lock: the running job may still be going through it. A second caller finds
+    // worker == NULL and returns at once, which is fine because Destroy only follows a first one
+    // that already joined.
+    if (worker != NULL) {
+        IHS_ThreadJoin(worker);
+    }
+    IHS_MutexLock(manager->workerLock);
+    IHS_HIDJob *node = manager->jobsHead;
+    manager->jobsHead = manager->jobsTail = NULL;
+    IHS_MutexUnlock(manager->workerLock);
+    while (node != NULL) {
+        IHS_HIDJob *next = node->next;
+        free(node->job);
+        free(node);
+        node = next;
+    }
+}
+
+bool IHS_HIDManagerWorkerStopping(IHS_HIDManager *manager) {
+    IHS_MutexLock(manager->workerLock);
+    bool stopping = manager->workerStop;
+    IHS_MutexUnlock(manager->workerLock);
+    return stopping;
 }
