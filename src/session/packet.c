@@ -134,7 +134,9 @@ void IHS_SessionPacketClear(IHS_SessionPacket *packet, bool freeData) {
 uint32_t IHS_SessionPacketTimestamp() {
     struct timespec tp;
     clock_gettime(CLOCK_MONOTONIC, &tp);
-    uint64_t nsec = tp.tv_nsec * 65536 / 1000000000;
-    uint32_t sec = tp.tv_sec * 65536;
-    return sec + nsec;
+    // Widen before multiplying: where long is 32 bits (WebAssembly), tv_nsec * 65536 overflows
+    // and the sub-second part came out as garbage. IHS_TimerNow had the same fix.
+    uint64_t nsec = (uint64_t) tp.tv_nsec * 65536 / 1000000000;
+    uint32_t sec = (uint32_t) ((uint64_t) tp.tv_sec * 65536);
+    return sec + (uint32_t) nsec;
 }
