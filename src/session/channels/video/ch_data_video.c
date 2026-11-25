@@ -51,6 +51,7 @@ typedef struct IHS_SessionChannelVideo {
         uint16_t lastFrameId;
         uint16_t frameCounter;
         uint64_t waitingKeyFrame;
+        uint64_t lastLossReport;
         uint64_t lastStatsTime;
         bool frameStarted;
         bool frameFinished;
@@ -143,6 +144,16 @@ static const IHS_SessionChannelDataClass ChannelClass = {
         .dataFrame = DataReceived,
         .stop = DataStop,
 };
+
+// Without waiting for a keyframe: tell the host about the loss, at most every 200 ms (the retry
+// interval of the waiting mode), and go on with the frames that follow.
+static void ReportLossNoWait(IHS_SessionChannel *channel) {
+    IHS_SessionChannelVideo *videoCh = (IHS_SessionChannelVideo *) channel;
+    uint64_t now = IHS_TimerNow();
+    if (videoCh->states.lastLossReport != 0 && now - videoCh->states.lastLossReport < 200) return;
+    videoCh->states.lastLossReport = now;
+    IHS_SessionChannelDataLost(channel);
+}
 
 static const uint8_t EmptyIV[16] = {
         0, 0, 0, 0, 0, 0, 0, 0,
@@ -241,7 +252,12 @@ static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrame
             videoCh->states.waitingKeyFrame = IHS_TimerNow();
         }
     } else if (vhead.sequence != videoCh->states.expectedSequence) {
-        if (videoCh->states.waitingKeyFrame == 0) {
+        if (channel->session->keepPlayingAfterLoss) {
+            IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
+                           "Unexpected video frame sequence %u (expect %u), reporting the loss", vhead.sequence,
+                           videoCh->states.expectedSequence);
+            ReportLossNoWait(channel);
+        } else if (videoCh->states.waitingKeyFrame == 0) {
             IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
                            "Unexpected video frame sequence %u (expect %u), request keyframe", vhead.sequence,
                            videoCh->states.expectedSequence);
@@ -383,6 +399,11 @@ static void CheckPartialOverflow(IHS_SessionChannel *channel) {
     }
     IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
                    "Partial frames stalled for %u ms, request keyframe", span * 1000 / 65536);
+    if (channel->session->keepPlayingAfterLoss) {
+        DiscardPending(videoCh);
+        ReportLossNoWait(channel);
+        return;
+    }
     IHS_SessionChannelDataLost(channel);
     videoCh->states.waitingKeyFrame = IHS_TimerNow();
 }

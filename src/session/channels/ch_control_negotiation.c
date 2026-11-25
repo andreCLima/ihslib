@@ -84,6 +84,7 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
     if (session->callbacks.session && session->callbacks.session->configuring) {
         session->callbacks.session->configuring(session, &ihsConf, session->callbackContexts.session);
     }
+    session->keepPlayingAfterLoss = ihsConf.keepPlayingAfterLoss;
 
     EStreamAudioCodec audioCodec = k_EStreamAudioCodecNone;
     EStreamVideoCodec videoCodec = k_EStreamVideoCodecNone;

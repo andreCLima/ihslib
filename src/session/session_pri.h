@@ -111,6 +111,8 @@ struct IHS_Session {
     /* Liveness: IHS_TimerNow() of the last packet received (low 32 bits), checked every second. */
     uint32_t lastReceivedMs;
     bool timedOut;
+    /* IHS_SessionConfig.keepPlayingAfterLoss, from the negotiation. */
+    bool keepPlayingAfterLoss;
     IHS_TimerTask *livenessTask;
     struct {
         const IHS_StreamSessionCallbacks *session;

@@ -75,6 +75,11 @@ typedef struct IHS_SessionConfig {
      * says which colorspace it chose. Set the streaming request's displayHdr too.
      */
     bool enableHdr;
+    /**
+     * After a lost video frame, report the loss and go on decoding the frames that follow, instead
+     * of dropping them until a keyframe comes. The picture may smear until the keyframe lands.
+     */
+    bool keepPlayingAfterLoss;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {
