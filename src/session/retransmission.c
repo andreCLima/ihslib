@@ -26,8 +26,24 @@
 #include "retransmission.h"
 #include "session_pri.h"
 
-#define RETRANSMISSION_INTERVAL 10
-#define RETRANSMISSION_ATTEMPTS 20
+/*
+ * Steam delivers reliable control messages in order, so one we stop resending holds back every
+ * later one: controller reports included, which left the game deaf to the pad (sometimes with a
+ * button held) while video and audio went on. 20 attempts 10 ms apart gave up after 200 ms, less
+ * than a Wi-Fi stall lasts. Back off from 10 ms to 250 ms and keep trying for about 12 s, as
+ * reliable transports do (ENet, which Moonlight uses for input, backs off and never drops one).
+ */
+#define RETRANSMISSION_INTERVAL_MIN 10
+#define RETRANSMISSION_INTERVAL_MAX 250
+#define RETRANSMISSION_ATTEMPTS 52
+
+static uint64_t RetransmissionInterval(uint8_t retransmitCount) {
+    uint64_t interval = RETRANSMISSION_INTERVAL_MIN;
+    for (uint8_t i = 1; i < retransmitCount && interval < RETRANSMISSION_INTERVAL_MAX; i++) {
+        interval *= 2;
+    }
+    return interval < RETRANSMISSION_INTERVAL_MAX ? interval : RETRANSMISSION_INTERVAL_MAX;
+}
 
 /*
  * A pending packet belongs to its timer task: the task's end callback takes it out of the queue
@@ -92,7 +108,7 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
     IHS_QueueAppend(retransmission->queue, pending);
     IHS_MutexUnlock(retransmission->lock);
     IHS_TimerTaskStart(retransmission->session->timers, RetransmissionTimerRun, RetransmissionTimerEnd,
-                       RETRANSMISSION_INTERVAL, pending);
+                       RetransmissionInterval(pending->packet.header.retransmitCount), pending);
     return true;
 }
 
