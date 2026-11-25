@@ -40,6 +40,12 @@ typedef struct IHS_SessionInfo {
     uint64_t steamId;
 } IHS_SessionInfo;
 
+/**
+ * bitrateKbps for an adaptive bitrate. Steam then lowers the bitrate when the client reports lost
+ * data and raises it again while the stream keeps up, up to maximum_decode_bitrate_kbps (30000).
+ */
+#define IHS_SESSION_BITRATE_ADAPTIVE (-2)
+
 typedef struct IHS_SessionConfig {
     bool enableAudio;
     bool enableHevc;
@@ -50,7 +56,10 @@ typedef struct IHS_SessionConfig {
      * 3 beautiful. 0 keeps balanced.
      */
     int quality;
-    /** Bitrate to ask for in kbit/s. 0 keeps 30000; -1 lets Steam decide. */
+    /**
+     * Bitrate to ask for in kbit/s. 0 keeps 30000; -1 lets Steam decide; IHS_SESSION_BITRATE_ADAPTIVE
+     * asks for no fixed bitrate, which turns on Steam's own bitrate control.
+     */
     int bitrateKbps;
     /**
      * Largest picture the client wants. 0 leaves it to Steam, which then stays at the 1920x1080

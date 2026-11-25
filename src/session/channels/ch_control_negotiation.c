@@ -163,7 +163,10 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
     int bitrateKbps = ihsConf.bitrateKbps != 0 ? ihsConf.bitrateKbps : 30000;
     PROTOBUF_C_SET_VALUE(clientConfig, quality,
                          ihsConf.quality != 0 ? (EStreamQualityPreference) ihsConf.quality : k_EStreamQualityBalanced);
-    PROTOBUF_C_SET_VALUE(clientConfig, maximum_bitrate_kbps, bitrateKbps);
+    // 0 is what Steam's own Steam Link app sends: no fixed bitrate, so the host's dynamic bitrate
+    // control runs. -1 has the host pick a fixed bitrate instead.
+    PROTOBUF_C_SET_VALUE(clientConfig, maximum_bitrate_kbps,
+                         ihsConf.bitrateKbps == IHS_SESSION_BITRATE_ADAPTIVE ? 0 : bitrateKbps);
     if (ihsConf.enableHevc) {
         PROTOBUF_C_SET_VALUE(clientConfig, enable_video_hevc, true);
     }
