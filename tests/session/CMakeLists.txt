@@ -15,4 +15,6 @@ target_link_libraries(ihstest_control_keyboard PRIVATE ihs-test-session)
 
 ihs_add_test(frame_stats test_frame_stats.c)
 
+ihs_add_test(retransmission test_retransmission.c)
+
 add_subdirectory(video)

@@ -46,3 +46,16 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
 
 bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId,
                               uint16_t packetId, uint16_t fragmentId);
+
+
+/** Delay before the first resend, in ms. Doubles with each attempt up to the maximum. */
+#define IHS_RETRANSMISSION_INTERVAL_MIN 10
+#define IHS_RETRANSMISSION_INTERVAL_MAX 250
+/** A packet whose retransmitCount reaches this is not queued again and is given up on. */
+#define IHS_RETRANSMISSION_ATTEMPTS 52
+
+/**
+ * Delay in ms before the next send of a packet that has been sent \p retransmitCount times
+ * (the queued copy counts 1). Exposed so tests can check the back-off.
+ */
+uint64_t IHS_RetransmissionInterval(uint8_t retransmitCount);

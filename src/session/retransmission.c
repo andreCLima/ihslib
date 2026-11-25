@@ -33,16 +33,13 @@
  * than a Wi-Fi stall lasts. Back off from 10 ms to 250 ms and keep trying for about 12 s, as
  * reliable transports do (ENet, which Moonlight uses for input, backs off and never drops one).
  */
-#define RETRANSMISSION_INTERVAL_MIN 10
-#define RETRANSMISSION_INTERVAL_MAX 250
-#define RETRANSMISSION_ATTEMPTS 52
 
-static uint64_t RetransmissionInterval(uint8_t retransmitCount) {
-    uint64_t interval = RETRANSMISSION_INTERVAL_MIN;
-    for (uint8_t i = 1; i < retransmitCount && interval < RETRANSMISSION_INTERVAL_MAX; i++) {
+uint64_t IHS_RetransmissionInterval(uint8_t retransmitCount) {
+    uint64_t interval = IHS_RETRANSMISSION_INTERVAL_MIN;
+    for (uint8_t i = 1; i < retransmitCount && interval < IHS_RETRANSMISSION_INTERVAL_MAX; i++) {
         interval *= 2;
     }
-    return interval < RETRANSMISSION_INTERVAL_MAX ? interval : RETRANSMISSION_INTERVAL_MAX;
+    return interval < IHS_RETRANSMISSION_INTERVAL_MAX ? interval : IHS_RETRANSMISSION_INTERVAL_MAX;
 }
 
 /*
@@ -89,7 +86,7 @@ void IHS_RetransmissionDeinit(IHS_SessionRetransmission *retransmission) {
 bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_SessionPacket *packet) {
     assert(packet->body.data != NULL);
     assert(packet->body.offset == IHS_PACKET_HEADER_SIZE);
-    if (packet->header.retransmitCount >= RETRANSMISSION_ATTEMPTS) {
+    if (packet->header.retransmitCount >= IHS_RETRANSMISSION_ATTEMPTS) {
         return false;
     }
     PendingRetransmission *pending = IHS_QueueItemObtain(retransmission->queue);
@@ -108,7 +105,7 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
     IHS_QueueAppend(retransmission->queue, pending);
     IHS_MutexUnlock(retransmission->lock);
     IHS_TimerTaskStart(retransmission->session->timers, RetransmissionTimerRun, RetransmissionTimerEnd,
-                       RetransmissionInterval(pending->packet.header.retransmitCount), pending);
+                       IHS_RetransmissionInterval(pending->packet.header.retransmitCount), pending);
     return true;
 }
 
@@ -169,7 +166,7 @@ static uint64_t RetransmissionTimerRun(int runCount, void *context) {
     if (!acked) {
         IHS_SessionPacket *packet = &pending->packet;
         IHS_SessionQueuePacket(retransmission->session, packet,
-                               packet->header.retransmitCount < RETRANSMISSION_ATTEMPTS);
+                               packet->header.retransmitCount < IHS_RETRANSMISSION_ATTEMPTS);
         assert(packet->body.data == NULL);
     }
     return 0;
