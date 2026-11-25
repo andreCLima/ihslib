@@ -94,6 +94,11 @@ struct IHS_HIDManagedDevice {
      * device to be alive.
      */
     bool pollable;
+    /**
+     * A full report is due for this device and has not been produced yet (it was busy). Only the
+     * poll task touches it.
+     */
+    bool resyncPending;
 };
 
 

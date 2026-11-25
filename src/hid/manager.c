@@ -242,22 +242,28 @@ static uint64_t HIDPollTick(int runCount, void *context) {
     size_t count;
     IHS_HIDManagedDevice **snapshot = IHS_HIDManagerSnapshotOpenDevices(manager, &count);
     bool anyData = false;
-    // Resync on this tick? The counter is only reset once every device was reached, so a device
-    // whose lock was busy (a request in flight) is retried on the next tick.
-    bool resync = ++manager->fullReportTicks >= HID_FULL_REPORT_TICKS;
-    bool resyncDone = true;
+    // Once a second every device becomes due for a full report. A device that is busy (a request
+    // in flight) stays due and is retried on the next tick, on its own: the others must not get
+    // another report every 4 ms meanwhile.
+    if (++manager->fullReportTicks >= HID_FULL_REPORT_TICKS) {
+        manager->fullReportTicks = 0;
+        for (size_t i = 0; i < count; ++i) {
+            snapshot[i]->resyncPending = true;
+        }
+    }
     for (size_t i = 0; i < count; ++i) {
         IHS_HIDManagedDevice *managed = snapshot[i];
-        bool wantsResync = resync;
+        bool wantsResync = managed->resyncPending;
         if (!managed->pollable && !wantsResync) continue;
         // useLock keeps the SDL event thread (device removed) and the HID worker (Close request)
         // from freeing the device while we use it. Try only: this is the timer thread.
         IHS_HIDTryAcquire acquired = IHS_HIDManagerTryAcquireDevice(managed);
-        if (acquired == IHS_HIDTryAcquireBusy) {
-            if (wantsResync) resyncDone = false;
+        if (acquired == IHS_HIDTryAcquireBusy) continue;
+        if (acquired == IHS_HIDTryAcquireClosed) {
+            managed->resyncPending = false;
             continue;
         }
-        if (acquired == IHS_HIDTryAcquireClosed) continue;
+        managed->resyncPending = false;
         int result = 0;
         if (managed->pollable) {
             IHS_HIDDeviceLock(managed->device);
@@ -284,9 +290,6 @@ static uint64_t HIDPollTick(int runCount, void *context) {
             // After the release: Close takes the lock itself.
             IHS_HIDManagedDeviceClose(managed);
         }
-    }
-    if (resync && resyncDone) {
-        manager->fullReportTicks = 0;
     }
     free(snapshot);
     if (anyData) {

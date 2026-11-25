@@ -160,6 +160,12 @@ struct IHS_HIDDeviceClass {
      */
     int (*poll)(IHS_HIDDevice *device);
 
+    /**
+     * True if sendFeatureReport fails for good (the SDL backend always returns -1), so the
+     * 50 retries Steam makes against a busy device would only keep the device locked for 100 ms.
+     */
+    bool sendFeatureReportOnce;
+
 };
 
 struct IHS_HIDProvider {

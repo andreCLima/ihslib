@@ -92,6 +92,22 @@ typedef struct HIDMessageJob {
 
 static void RunHIDMessage(IHS_HIDManager *manager, void *context);
 
+/* Requests Steam waits on: it blocks until a response with this request_id arrives. */
+static void RejectHIDRequest(IHS_SessionChannel *channel, const CHIDMessageToRemote *message) {
+    switch (message->command_case) {
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_OPEN:
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_READ:
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_FEATURE_REPORT:
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_VENDOR_STRING:
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_PRODUCT_STRING:
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_SERIAL_NUMBER_STRING:
+            SendRequestCodeResponse(channel, message->request_id, -1);
+            break;
+        default:
+            break;
+    }
+}
+
 void IHS_SessionChannelControlOnHIDMsg(IHS_SessionChannel *channel, const CHIDMessageToRemote *message) {
     IHS_HIDManager *manager = channel->session->hidManager;
     // The caller frees `message` when this returns, so the job takes a packed copy.
@@ -99,13 +115,16 @@ void IHS_SessionChannelControlOnHIDMsg(IHS_SessionChannel *channel, const CHIDMe
     HIDMessageJob *job = malloc(sizeof(HIDMessageJob) + len);
     if (job == NULL) {
         IHS_SessionLog(channel->session, IHS_LogLevelWarn, "HID", "Failed to allocate %zu bytes for HID request", len);
+        RejectHIDRequest(channel, message);
         return;
     }
     job->len = len;
     chidmessage_to_remote__pack(message, job->data);
     if (!IHS_HIDManagerDefer(manager, RunHIDMessage, job)) {
-        // Worker stopped: the session is ending, nobody is left to answer to.
+        // The worker is stopped (the session is ending) or would not start. Answer what is waited
+        // on, as the inline handlers did for a missing device.
         free(job);
+        RejectHIDRequest(channel, message);
     }
 }
 
@@ -450,15 +469,18 @@ static void HandleDeviceSendFeatureReport(IHS_SessionChannel *channel, IHS_HIDMa
     // retry up to 50 times with 2 ms between attempts. Protects force-feedback /
     // LED commands from transient HID write failures (busy device, USB hiccup).
     int ret = -1;
-    for (int attempt = 0; attempt < 50; attempt++) {
+    int attempts = managed->device->cls->sendFeatureReportOnce ? 1 : 50;
+    for (int attempt = 0; attempt < attempts; attempt++) {
         ret = IHS_HIDDeviceSendFeatureReport(managed->device, cmd->data.data, cmd->data.len);
         if (ret >= 0) break;
-        usleep(2000);
+        // StopWorker waits for this loop; do not make a stopping session sit through it.
+        if (IHS_HIDManagerWorkerStopping(manager)) break;
+        if (attempt + 1 < attempts) usleep(2000);
     }
     if (ret < 0) {
         IHS_SessionLog(channel->session, IHS_LogLevelWarn, "HID",
-                       "Message %u: SendFeatureReport(id=%u) failed after 50 attempts: %d",
-                       message->request_id, cmd->device, ret);
+                       "Message %u: SendFeatureReport(id=%u) failed after %d attempt(s): %d",
+                       message->request_id, cmd->device, attempts, ret);
     }
 }
 

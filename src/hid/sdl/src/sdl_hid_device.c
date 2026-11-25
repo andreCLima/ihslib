@@ -69,6 +69,7 @@ static const IHS_HIDDeviceClass DeviceClass = {
         .getSerialNumberString = DeviceSerialNumber,
         .startInputReports = DeviceStartInputReports,
         .requestFullReport = DeviceRequestFullReport,
+        .sendFeatureReportOnce = true,
         .requestDisconnect = DeviceRequestDisconnect,
 };
 

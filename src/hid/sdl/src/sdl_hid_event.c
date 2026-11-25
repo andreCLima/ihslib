@@ -82,7 +82,12 @@ bool IHS_HIDResetSDLGameControllers(IHS_Session *session) {
     IHS_HIDManagedDevice **snapshot = IHS_HIDManagerSnapshotOpenDevices(manager, &count);
     for (size_t i = 0; i < count; ++i) {
         IHS_HIDManagedDevice *managed = snapshot[i];
+        // Held before the device is read at all: a Close elsewhere frees it.
+        if (!IHS_HIDManagerAcquireDevice(managed)) {
+            continue;
+        }
         if (!IHS_HIDDeviceIsSDL(managed->device)) {
+            IHS_HIDManagerReleaseDevice(managed);
             continue;
         }
         IHS_HIDDeviceSDL *device = (IHS_HIDDeviceSDL *) managed->device;
@@ -94,6 +99,7 @@ bool IHS_HIDResetSDLGameControllers(IHS_Session *session) {
             device->states.previous = device->states.current;
         }
         IHS_HIDDeviceUnlock(managed->device);
+        IHS_HIDManagerReleaseDevice(managed);
     }
     free(snapshot);
     if (changed) {
@@ -116,6 +122,12 @@ static bool HandleCButtonEvent(IHS_HIDManager *manager, const SDL_ControllerButt
     if (managed == NULL) {
         return false;
     }
+    // Waits, never skips: a dropped event could be the release of a button. Holders keep the
+    // device only for a request or a poll, so the wait is short. Needed because a Close from the
+    // host (HID worker) frees the device.
+    if (!IHS_HIDManagerAcquireDevice(managed)) {
+        return false;
+    }
     IHS_HIDDeviceSDL *device = (IHS_HIDDeviceSDL *) managed->device;
     assert(device != NULL);
     IHS_HIDDeviceLock(managed->device);
@@ -127,12 +139,19 @@ static bool HandleCButtonEvent(IHS_HIDManager *manager, const SDL_ControllerButt
         device->states.previous = device->states.current;
     }
     IHS_HIDDeviceUnlock(managed->device);
+    IHS_HIDManagerReleaseDevice(managed);
     return changed;
 }
 
 static bool HandleCAxisEvent(IHS_HIDManager *manager, const SDL_ControllerAxisEvent *event) {
     IHS_HIDManagedDevice *managed = IHS_HIDManagerDeviceByJoystickID(manager, event->which);
     if (managed == NULL) {
+        return false;
+    }
+    // Waits, never skips: a dropped event could be the release of a button. Holders keep the
+    // device only for a request or a poll, so the wait is short. Needed because a Close from the
+    // host (HID worker) frees the device.
+    if (!IHS_HIDManagerAcquireDevice(managed)) {
         return false;
     }
     IHS_HIDDeviceSDL *device = (IHS_HIDDeviceSDL *) managed->device;
@@ -145,12 +164,19 @@ static bool HandleCAxisEvent(IHS_HIDManager *manager, const SDL_ControllerAxisEv
         device->states.previous = device->states.current;
     }
     IHS_HIDDeviceUnlock(managed->device);
+    IHS_HIDManagerReleaseDevice(managed);
     return changed;
 }
 
 static bool HandleSensorEvent(IHS_HIDManager *manager, const SDL_ControllerSensorEvent *event) {
     IHS_HIDManagedDevice *managed = IHS_HIDManagerDeviceByJoystickID(manager, event->which);
     if (managed == NULL) {
+        return false;
+    }
+    // Waits, never skips: a dropped event could be the release of a button. Holders keep the
+    // device only for a request or a poll, so the wait is short. Needed because a Close from the
+    // host (HID worker) frees the device.
+    if (!IHS_HIDManagerAcquireDevice(managed)) {
         return false;
     }
     IHS_HIDDeviceSDL *device = (IHS_HIDDeviceSDL *) managed->device;
@@ -168,5 +194,6 @@ static bool HandleSensorEvent(IHS_HIDManager *manager, const SDL_ControllerSenso
         device->states.previous = device->states.current;
     }
     IHS_HIDDeviceUnlock(managed->device);
+    IHS_HIDManagerReleaseDevice(managed);
     return changed;
 }
