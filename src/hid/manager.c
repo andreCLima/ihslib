@@ -32,7 +32,9 @@
 #include "protobuf/pb_utils.h"
 #include "session/session_pri.h"
 
-#define HID_POLL_INTERVAL_MS 8u
+/* 250 Hz. Every poll sends only what changed, so a faster poll adds little traffic, and a
+ * button press waits 2 ms on average for it instead of 4. */
+#define HID_POLL_INTERVAL_MS 4u
 
 static uint64_t HIDPollTick(int runCount, void *context);
 
