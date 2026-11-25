@@ -70,7 +70,7 @@ static void ChannelMicrophoneInit(IHS_SessionChannel *channel, const void *confi
     mic->config.channels = message->channels;
     mic->config.frequency = message->frequency;
     mic->config.codec = (IHS_StreamAudioCodec) message->codec;
-    if (message->has_codec_data) {
+    if (message->has_codec_data && message->codec_data.len > 0) {
         mic->config.codecDataLen = message->codec_data.len;
         mic->config.codecData = malloc(message->codec_data.len);
         memcpy(mic->config.codecData, message->codec_data.data, message->codec_data.len);
