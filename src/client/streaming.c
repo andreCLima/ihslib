@@ -53,9 +53,13 @@ bool IHS_ClientStreamingRequest(IHS_Client *client, const IHS_HostInfo *host, co
     state->requestId = IHS_CryptoRandomUInt32();
     state->lastMsgType = k_ERemoteClientBroadcastMsgDiscovery;
     state->lastMsgTime = IHS_TimerNow();
+    // Start the task without holding the base lock: the timer thread runs tasks (and their
+    // cleanups) with the timer mutex held and those take the base lock, so taking the timer
+    // mutex under the base lock here can deadlock against it. The task only finds its handle
+    // through callbacks that arrive after the host answers.
+    IHS_TimerTask *task = IHS_TimerTaskStart(client->timers, StreamingRequestTimer, StreamingRequestCleanup, 0, state);
     IHS_BaseLock(&client->base);
-    client->taskHandles.streaming = IHS_TimerTaskStart(client->timers, StreamingRequestTimer, StreamingRequestCleanup,
-                                                       0, state);
+    client->taskHandles.streaming = task;
     IHS_BaseUnlock(&client->base);
     return true;
 }

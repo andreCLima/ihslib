@@ -65,9 +65,14 @@ bool IHS_ClientAuthorizationRequest(IHS_Client *client, const IHS_HostInfo *host
         free(state);
         return false;
     }
+    // Start the task without holding the base lock: the timer thread runs tasks (and their
+    // cleanups) with the timer mutex held and those take the base lock, so taking the timer
+    // mutex under the base lock here can deadlock against it. The task only finds its handle
+    // through callbacks that arrive after the host answers.
+    IHS_TimerTask *task = IHS_TimerTaskStart(client->timers, AuthorizationRequestTimer, AuthorizationRequestCleanup, 0,
+                                             state);
     IHS_BaseLock(&client->base);
-    client->taskHandles.authorization = IHS_TimerTaskStart(client->timers, AuthorizationRequestTimer,
-                                                           AuthorizationRequestCleanup, 0, state);
+    client->taskHandles.authorization = task;
     IHS_BaseUnlock(&client->base);
     return true;
 }
