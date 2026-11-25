@@ -204,8 +204,11 @@ static uint64_t StreamingRequestTimer(int runCount, void *context) {
     message.has_stream_interface = true;
     message.stream_interface = (EStreamInterface) request.streamingInterface;
 
+    // stream_desktop asks for the desktop whatever stream_interface says: with it always on,
+    // Steam streamed the desktop even for k_EStreamInterfaceBigPicture.
     message.has_stream_desktop = true;
-    message.stream_desktop = true;
+    message.stream_desktop = request.streamingInterface == IHS_StreamInterfaceDefault ||
+                             request.streamingInterface == IHS_StreamInterfaceDesktop;
 
     message.has_form_factor = true;
     message.form_factor = k_EStreamDeviceFormFactorTV;
