@@ -34,6 +34,9 @@
 typedef struct ChannelAudio {
     IHS_SessionChannelData base;
     IHS_StreamAudioConfig config;
+    /* Data frame ids count up by one per audio frame; a gap is frames lost. */
+    bool frameIdStarted;
+    uint16_t nextFrameId;
 } ChannelAudio;
 
 static void ChannelAudioInit(IHS_SessionChannel *channel, const void *config);
@@ -96,7 +99,20 @@ static bool DataStart(struct IHS_SessionChannel *channel) {
 
 static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrameHeader *header, IHS_Buffer *body) {
     IHS_Session *session = channel->session;
+    ChannelAudio *audioCh = (ChannelAudio *) channel;
     const IHS_StreamAudioCallbacks *callbacks = session->callbacks.audio;
+    if (header != NULL) {
+        int16_t gap = audioCh->frameIdStarted ? (int16_t) (header->id - audioCh->nextFrameId) : 0;
+        if (gap < 0) {
+            // Older than a frame already passed on, or already reported lost.
+            return;
+        }
+        if (gap > 0 && callbacks && callbacks->lost) {
+            callbacks->lost(session, (uint32_t) gap, session->callbackContexts.audio);
+        }
+        audioCh->frameIdStarted = true;
+        audioCh->nextFrameId = (uint16_t) (header->id + 1);
+    }
     if (!callbacks || !callbacks->submit) return;
     callbacks->submit(session, body, session->callbackContexts.audio);
 }

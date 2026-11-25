@@ -55,6 +55,13 @@ typedef struct IHS_StreamAudioCallbacks {
     int (*submit)(IHS_Session *session, IHS_Buffer *data, void *context);
 
     void (*stop)(IHS_Session *session, void *context);
+
+    /**
+     * Optional: frames that never arrived, in the place where they belong (called before the
+     * frame that follows them). Audio isn't resent, so a decoder can conceal them, as Opus does
+     * when decoding without data.
+     */
+    void (*lost)(IHS_Session *session, uint32_t frames, void *context);
 } IHS_StreamAudioCallbacks;
 
 /**
