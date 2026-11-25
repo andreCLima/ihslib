@@ -30,6 +30,7 @@
 #include "session/frame.h"
 #include "session/window.h"
 #include "ihs_timer.h"
+#include "ihs_thread.h"
 
 #include "protobuf/remoteplay.pb-c.h"
 #include "protobuf/hiddevices.pb-c.h"
@@ -40,6 +41,12 @@ typedef struct IHS_SessionChannelControl {
     uint64_t recvEncryptSequence;
     IHS_SessionPacketsWindow *framePacketWindow;
     IHS_TimerTask *keepAliveTimer;
+    /**
+     * Serializes IHS_SessionChannelControlSend: the packet id and the encryption sequence are
+     * plain counters, and input, HID reports, keepalives and stats are sent from different
+     * threads.
+     */
+    IHS_Mutex *sendLock;
 } IHS_SessionChannelControl;
 
 IHS_SessionChannel *IHS_SessionChannelControlCreate(IHS_Session *session);

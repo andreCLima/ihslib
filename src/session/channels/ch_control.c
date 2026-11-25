@@ -91,6 +91,7 @@ bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMe
             break;
     }
     IHS_SessionFrame frame;
+    IHS_MutexLock(control->sendLock);
     IHS_SessionChannelInitializeFrame(channel, &frame, IHS_SessionPacketTypeReliable, true, packetId);
     IHS_SessionLog(channel->session, logLevel, "Control", "Send control message: %s, id=%u", value->name,
                    frame.header.packetId);
@@ -104,6 +105,7 @@ bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMe
                                     control->sendEncryptSequence++) != 0) {
             free(serialized);
             IHS_SessionFrameClear(&frame, true);
+            IHS_MutexUnlock(control->sendLock);
             IHS_SessionLog(channel->session, IHS_LogLevelError, "Control", "Failed to encrypt payload\n");
             IHS_SessionDisconnect(channel->session);
             return false;
@@ -114,6 +116,7 @@ bool IHS_SessionChannelControlSend(IHS_SessionChannel *channel, EStreamControlMe
         IHS_BufferAppendMessage(&frame.body, message);
     }
     ret = IHS_SessionChannelQueueFrame(channel, &frame, true);
+    IHS_MutexUnlock(control->sendLock);
     IHS_SessionFrameClear(&frame, true);
     return ret;
 }
@@ -139,11 +142,13 @@ static void OnControlInit(IHS_SessionChannel *channel, const void *data) {
     IHS_UNUSED(data);
     IHS_SessionChannelControl *control = (IHS_SessionChannelControl *) channel;
     control->framePacketWindow = IHS_SessionPacketsWindowCreate(128);
+    control->sendLock = IHS_MutexCreate();
 }
 
 static void OnControlDeinit(IHS_SessionChannel *channel) {
     IHS_SessionChannelControl *control = (IHS_SessionChannelControl *) channel;
     IHS_SessionPacketsWindowDestroy(control->framePacketWindow);
+    IHS_MutexDestroy(control->sendLock);
 }
 
 static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *packet) {
