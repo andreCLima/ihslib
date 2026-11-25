@@ -80,6 +80,7 @@ struct IHS_FrameStatsAggregator;
 typedef struct IHS_SessionCounters {
     uint32_t videoPackets;
     uint32_t videoPacketsLost;
+    uint32_t videoBytes;
     uint32_t lostReports;
     /* Smoothed round trip, in packet timestamp units (1/65536 s); 0 until measured. */
     uint32_t roundTrip;

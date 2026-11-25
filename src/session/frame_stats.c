@@ -190,11 +190,6 @@ static void fold_slot(IHS_FrameStatsAggregator *agg, IHS_FrameStatsSlot *slot) {
         agg->lastFrameTimestamp = slot->events[EV_COMPLETE];
     }
 
-    /* Network duration (stat 6): event 12 → 13. */
-    if (has_event(slot, EV_FRAME_SEND) && has_event(slot, EV_FRAME_RECV)) {
-        accum_add(accum, 6,
-                  ticks_to_ms(slot->events[EV_FRAME_SEND], slot->events[EV_FRAME_RECV]));
-    }
     /* Decode duration (stat 7): event 14 → 15. */
     if (has_event(slot, EV_DECODE_BEGIN) && has_event(slot, EV_DECODE_END)) {
         accum_add(accum, 7,
@@ -211,10 +206,35 @@ static void fold_slot(IHS_FrameStatsAggregator *agg, IHS_FrameStatsSlot *slot) {
                   ticks_to_ms(slot->events[EV_FRAME_RECV], slot->events[EV_COMPLETE]));
     }
 
-    /* Stats 0 (FPS), 11/12/13 (input latency variants), 14 (ping), 15/16/17
-     * (bitrates), 18 (loss) require either an FPS sampler, the input-mark
-     * pipeline, or network-stats hooks that ihslib does not yet own. They are
-     * left out of this MVP; when those signals land they can fold in here. */
+    /* Stats 0 (FPS) and 11/12/13 (input latency variants) require an FPS
+     * sampler or the input-mark pipeline, left out of this MVP. 14 to 18 come
+     * from IHS_FrameStatsAddNetworkSample. Network duration (stat 6) is left
+     * out: events 12 and 13 come from the host's and the client's clocks. */
+}
+
+void IHS_FrameStatsAddNetworkSample(IHS_FrameStatsAggregator *agg, uint64_t nowMs, uint32_t roundTrip,
+                                    uint32_t bytes, uint32_t packets, uint32_t packetsLost) {
+    IHS_MutexLock(agg->lock);
+    if (agg->lastNetworkSampleMs != 0 && nowMs > agg->lastNetworkSampleMs) {
+        IHS_FrameStatsAccumulator *accum = &agg->accumulator;
+        double kbps = (double) (bytes - agg->lastBytes) * 8.0 / (double) (nowMs - agg->lastNetworkSampleMs);
+        accum_add(accum, k_EFrameStatServerBitrateKbitPerSec, kbps);
+        accum_add(accum, k_EFrameStatClientBitrateKbitPerSec, kbps);
+        accum_add(accum, k_EFrameStatLinkBandwidthKbitPerSec, kbps);
+        uint32_t received = packets - agg->lastPackets;
+        uint32_t lost = packetsLost > agg->lastPacketsLost ? packetsLost - agg->lastPacketsLost : 0;
+        if (received + lost > 0) {
+            accum_add(accum, k_EFrameStatPacketLossPercentage, 100.0 * lost / (received + lost));
+        }
+        if (roundTrip != 0) {
+            accum_add(accum, k_EFrameStatPingTimeMS, roundTrip * 1000.0 / 65536.0);
+        }
+    }
+    agg->lastBytes = bytes;
+    agg->lastNetworkSampleMs = nowMs;
+    agg->lastPackets = packets;
+    agg->lastPacketsLost = packetsLost;
+    IHS_MutexUnlock(agg->lock);
 }
 
 size_t IHS_FrameStatsAggregatorDrain(IHS_FrameStatsAggregator *agg, uint16_t *outLatestFrameId) {

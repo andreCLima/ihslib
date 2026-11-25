@@ -213,10 +213,9 @@ void IHS_SessionReportVideoFrameStage(IHS_Session *session, uint16_t frameId,
 
 /**
  * Report the final outcome of a video frame (displayed or one of the drop
- * categories). Must be called exactly once per frame the application
- * processed, AFTER any IHS_SessionReportVideoFrameStage calls for it. This is
- * what advances the "last displayed" cursor that the 1 Hz flush walks; if
- * skipped, the host never gets stats for that frame.
+ * categories), AFTER any IHS_SessionReportVideoFrameStage calls for it. ihslib
+ * already reports each frame it hands to the decoder, as displayed when the
+ * decoder takes it; call this to report a different outcome.
  *
  * Safe to call from any thread.
  */

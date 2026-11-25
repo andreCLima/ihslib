@@ -297,6 +297,9 @@ static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrame
 
     if (AssembleFrame(channel)) {
         IHS_StreamVideoSubmitResult result = SubmitFrame(channel, &videoCh->frame.buffer, videoCh->frame.flags);
+        IHS_SessionReportVideoFrameComplete(channel->session, header->id,
+                                            result == IHS_StreamVideoSubmitOK ? IHS_VideoFrameResultDisplayed
+                                                                              : IHS_VideoFrameResultDroppedDecodeCorrupt);
         IHS_BufferClear(&videoCh->frame.buffer, false);
         videoCh->frame.flags = 0;
         videoCh->states.frameFinished = false;
@@ -497,15 +500,18 @@ static uint64_t ReportVideoStats(int runCount, void *data) {
     /* Drain the per-frame stats aggregator into the accumulator and ship one
      * CFrameStatsListMsg over the stats channel. Matches Steam's
      * CStreamClient::SendFrameEvents (0x001fb4f0) — 1 Hz, video only, packet
-     * suppressed when nothing was folded. */
+     * suppressed when there is nothing to send. */
     if (session->frameStats == NULL) {
         return 1000;
     }
     uint16_t latest = 0;
-    size_t folded = IHS_FrameStatsAggregatorDrain(session->frameStats, &latest);
-    if (folded == 0) {
-        return 1000;
-    }
+    IHS_FrameStatsAggregatorDrain(session->frameStats, &latest);
+    IHS_FrameStatsAddNetworkSample(session->frameStats, now, IHS_SessionCounterGet(session->counters.roundTrip),
+                                   IHS_SessionCounterGet(session->counters.videoBytes),
+                                   IHS_SessionCounterGet(session->counters.videoPackets) +
+                                   IHS_SessionCounterGet(session->counters.fecShards),
+                                   IHS_SessionCounterGet(session->counters.videoPacketsLost) +
+                                   IHS_SessionCounterGet(session->counters.fecShardsLost));
     IHS_SessionChannel *stats = IHS_SessionChannelFor(session, IHS_SessionChannelIdStats);
     if (stats == NULL) {
         return 1000;
@@ -544,6 +550,9 @@ static uint64_t ReportVideoStats(int runCount, void *data) {
         }
         accumPtrs[rowCount] = row;
         rowCount++;
+    }
+    if (rowCount == 0) {
+        return 1000;
     }
     message.n_accumulated_stats = rowCount;
     message.accumulated_stats = accumPtrs;

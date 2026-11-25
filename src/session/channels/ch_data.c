@@ -83,6 +83,9 @@ void IHS_SessionChannelDataDeinit(IHS_SessionChannel *channel) {
 void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPacket *packet) {
     IHS_SessionChannelData *dataCh = (IHS_SessionChannelData *) channel;
     assert(dataCh->window != NULL);
+    if (channel->type == IHS_SessionChannelTypeDataVideo) {
+        IHS_SessionCounterAdd(channel->session->counters.videoBytes, (uint32_t) packet->body.size);
+    }
     IHS_SessionPacket assembled;
     bool fromFec = packet->header.type == IHS_SessionPacketTypeUnreliableFEC;
     if (fromFec) {

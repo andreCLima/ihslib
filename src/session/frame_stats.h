@@ -88,6 +88,10 @@ typedef struct IHS_FrameStatsAggregator {
     uint16_t lastDisplayedFrameId;
     uint32_t lastFrameTimestamp;    /* event 18 of the previous *completed* frame */
     bool fullReporting;             /* mirrors CStreamClient::sendFullFrameStats */
+    uint64_t lastNetworkSampleMs;
+    uint32_t lastBytes;
+    uint32_t lastPackets;
+    uint32_t lastPacketsLost;
 } IHS_FrameStatsAggregator;
 
 IHS_FrameStatsAggregator *IHS_FrameStatsAggregatorCreate(void);
@@ -141,3 +145,11 @@ void IHS_FrameStatsRecordReceived(IHS_FrameStatsAggregator *agg, uint16_t frameI
 size_t IHS_FrameStatsAggregatorDrain(IHS_FrameStatsAggregator *agg, uint16_t *outLatestFrameId);
 
 void IHS_FrameStatsAccumulatorReset(IHS_FrameStatsAccumulator *accum);
+
+/**
+ * Adds the network stats Steam's own client sends with each CFrameStatsListMsg: ping, bitrate and
+ * packet loss since the previous call. roundTrip is in 1/65536 s, 0 when not measured yet; bytes,
+ * packets and packetsLost are running totals.
+ */
+void IHS_FrameStatsAddNetworkSample(IHS_FrameStatsAggregator *agg, uint64_t nowMs, uint32_t roundTrip,
+                                    uint32_t bytes, uint32_t packets, uint32_t packetsLost);
