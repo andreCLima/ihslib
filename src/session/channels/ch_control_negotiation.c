@@ -137,8 +137,9 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
 
     CStreamingClientConfig clientConfig = CSTREAMING_CLIENT_CONFIG__INIT;
 
-    PROTOBUF_C_SET_VALUE(clientConfig, maximum_resolution_x, 0);
-    PROTOBUF_C_SET_VALUE(clientConfig, maximum_resolution_y, 0);
+    // Fields 2 and 3 are desired_resolution_x/y in current Steam.
+    PROTOBUF_C_SET_VALUE(clientConfig, maximum_resolution_x, ihsConf.maxWidth > 0 ? ihsConf.maxWidth : 0);
+    PROTOBUF_C_SET_VALUE(clientConfig, maximum_resolution_y, ihsConf.maxHeight > 0 ? ihsConf.maxHeight : 0);
     PROTOBUF_C_SET_VALUE(clientConfig, enable_hardware_decoding, true);
     PROTOBUF_C_SET_VALUE(clientConfig, enable_performance_overlay, true);
     if (ihsConf.enableAudio) {
@@ -193,6 +194,22 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
         PROTOBUF_C_SET_VALUE(clientCaps, supports_video_hevc, true);
     }
     PROTOBUF_C_SET_VALUE(clientCaps, form_factor, k_EStreamDeviceFormFactorTV);
+
+    // supported_video_codecs (15) is newer than ihslib's copy of the protocol, where the caps only
+    // have supports_video_hevc, which current Steam marks obsolete. Repeated, unpacked: one
+    // unknown field per codec, the preferred one first.
+    uint8_t h264 = k_EStreamVideoCodecH264, hevc = k_EStreamVideoCodecHEVC;
+    ProtobufCMessageUnknownField codecFields[2] = {
+            {15, PROTOBUF_C_WIRE_TYPE_VARINT, 1, &hevc},
+            {15, PROTOBUF_C_WIRE_TYPE_VARINT, 1, &h264},
+    };
+    if (ihsConf.enableHevc) {
+        clientCaps.base.n_unknown_fields = 2;
+        clientCaps.base.unknown_fields = codecFields;
+    } else {
+        clientCaps.base.n_unknown_fields = 1;
+        clientCaps.base.unknown_fields = &codecFields[1];
+    }
 
     CNegotiationSetConfigMsg response = CNEGOTIATION_SET_CONFIG_MSG__INIT;
     response.config = &config;

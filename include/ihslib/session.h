@@ -52,6 +52,12 @@ typedef struct IHS_SessionConfig {
     int quality;
     /** Bitrate to ask for in kbit/s. 0 keeps 30000; -1 lets Steam decide. */
     int bitrateKbps;
+    /**
+     * Largest picture the client wants. 0 leaves it to Steam, which then stays at the 1920x1080
+     * display ihslib describes; the maximum resolution in the streaming request doesn't lift that.
+     */
+    int maxWidth;
+    int maxHeight;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {
