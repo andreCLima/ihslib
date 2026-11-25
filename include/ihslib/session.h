@@ -196,3 +196,20 @@ void IHS_SessionStatsSetFullReporting(IHS_Session *session, bool enabled);
 void IHS_SessionSetLogFunction(IHS_Session *session, IHS_LogFunction *logFunction);
 
 const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session);
+
+/**
+ * Counters since the session started, for display. Safe to call from any thread while the session
+ * exists, also after it has disconnected.
+ */
+typedef struct IHS_SessionStreamStats {
+    /** Packets received on the video channel. */
+    uint32_t videoPackets;
+    /** Video packets that never arrived (from gaps in the packet ids). */
+    uint32_t videoPacketsLost;
+    /** Data lost notifications sent for video. Steam answers each with a keyframe. */
+    uint32_t lostReports;
+    /** Smoothed round trip of reliable packets in milliseconds; 0 until measured. */
+    float roundTripMs;
+} IHS_SessionStreamStats;
+
+void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

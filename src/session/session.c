@@ -195,6 +195,14 @@ const IHS_SessionInfo *IHS_SessionGetInfo(const IHS_Session *session) {
     return &session->info;
 }
 
+void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats) {
+    memset(stats, 0, sizeof(*stats));
+    stats->videoPackets = IHS_SessionCounterGet(session->counters.videoPackets);
+    stats->videoPacketsLost = IHS_SessionCounterGet(session->counters.videoPacketsLost);
+    stats->lostReports = IHS_SessionCounterGet(session->counters.lostReports);
+    stats->roundTripMs = (float) IHS_SessionCounterGet(session->counters.roundTrip) * 1000.0f / 65536.0f;
+}
+
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
     (void) address;
     IHS_Session *session = (IHS_Session *) base;

@@ -49,6 +49,12 @@ typedef struct IHS_SessionChannelData {
     IHS_Mutex *lock;
 
     uint32_t lastPacketTimestamp;
+
+    /* Loss accounting for IHS_SessionStreamStats: packet ids extended to 32 bits. */
+    bool seqStarted;
+    uint32_t seqFirst;
+    uint32_t seqHighest;
+    uint32_t seqReceived;
 } IHS_SessionChannelData;
 
 typedef struct IHS_SessionChannelDataClass {

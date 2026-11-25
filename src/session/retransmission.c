@@ -99,7 +99,20 @@ bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_Ses
     IHS_MutexUnlock(retransmission->lock);
     if (match == NULL) {
         return false;
-    } else if (match->task != NULL) {
+    }
+    if (match->packet.header.retransmitCount == 1) {
+        // Sent once (the queued copy counts 1), so the ACK can only be for that send. Smoothed
+        // like TCP's SRTT, by 1/8 per sample.
+        IHS_Session *session = retransmission->session;
+        uint32_t sample = IHS_SessionPacketTimestamp() - match->packet.header.sendTimestamp;
+        if (sample == 0) {
+            sample = 1;  // 0 means not measured
+        }
+        uint32_t rtt = IHS_SessionCounterGet(session->counters.roundTrip);
+        IHS_SessionCounterSet(session->counters.roundTrip,
+                              rtt == 0 ? sample : (uint32_t) ((int64_t) rtt + ((int64_t) sample - rtt) / 8));
+    }
+    if (match->task != NULL) {
         IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
                        "Cancelling Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
                        channelId, packetId, fragmentId, match->packet.header.retransmitCount);

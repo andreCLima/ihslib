@@ -76,6 +76,19 @@ typedef struct IHS_SessionState {
 
 struct IHS_FrameStatsAggregator;
 
+/* Written by session threads, read by the app through IHS_SessionGetStreamStats. */
+typedef struct IHS_SessionCounters {
+    uint32_t videoPackets;
+    uint32_t videoPacketsLost;
+    uint32_t lostReports;
+    /* Smoothed round trip, in packet timestamp units (1/65536 s); 0 until measured. */
+    uint32_t roundTrip;
+} IHS_SessionCounters;
+
+#define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)
+#define IHS_SessionCounterSet(field, v) __atomic_store_n(&(field), (v), __ATOMIC_RELAXED)
+#define IHS_SessionCounterGet(field) __atomic_load_n(&(field), __ATOMIC_RELAXED)
+
 struct IHS_Session {
     IHS_Base base;
     IHS_SessionInfo info;
@@ -90,6 +103,7 @@ struct IHS_Session {
     IHS_SessionRetransmission retransmission;
     IHS_HIDManager *hidManager;
     struct IHS_FrameStatsAggregator *frameStats;
+    IHS_SessionCounters counters;
     struct {
         const IHS_StreamSessionCallbacks *session;
         const IHS_StreamAudioCallbacks *audio;

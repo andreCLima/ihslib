@@ -35,6 +35,8 @@
 
 static void DataThreadWorker(IHS_SessionChannelData *channel);
 
+static void CountVideoPacket(IHS_SessionChannelData *channel, uint16_t packetId);
+
 static void DataThreadInterrupt(IHS_SessionChannelData *channel);
 
 static void ReceivedFrame(IHS_SessionChannelData *channel, IHS_SessionFrame *frame);
@@ -78,6 +80,9 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     assert(dataCh->window != NULL);
     IHS_SessionPacketType type = packet->header.type;
     assert(type == IHS_SessionPacketTypeUnreliable || type == IHS_SessionPacketTypeUnreliableFrag);
+    if (channel->type == IHS_SessionChannelTypeDataVideo) {
+        CountVideoPacket(dataCh, packet->header.packetId);
+    }
     IHS_MutexLock(dataCh->windowLock);
     if (!IHS_SessionPacketsWindowAdd(dataCh->window, packet)) {
         IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data", "%s channel items overflow! Available: %u",
@@ -93,7 +98,29 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     dataCh->lastPacketTimestamp = packet->header.sendTimestamp;
 }
 
+static void CountVideoPacket(IHS_SessionChannelData *channel, uint16_t packetId) {
+    IHS_SessionCounters *counters = &channel->base.session->counters;
+    if (!channel->seqStarted) {
+        channel->seqStarted = true;
+        channel->seqFirst = channel->seqHighest = packetId;
+    } else {
+        int16_t ahead = (int16_t) (packetId - (uint16_t) channel->seqHighest);
+        if (ahead > 0) {
+            channel->seqHighest += (uint32_t) ahead;
+        }
+    }
+    channel->seqReceived++;
+    // Expected minus received, as RTP counts it: a late packet makes up for the gap it left.
+    uint32_t expected = channel->seqHighest - channel->seqFirst + 1;
+    IHS_SessionCounterSet(counters->videoPackets, channel->seqReceived);
+    IHS_SessionCounterSet(counters->videoPacketsLost,
+                          expected > channel->seqReceived ? expected - channel->seqReceived : 0);
+}
+
 void IHS_SessionChannelDataLost(IHS_SessionChannel *channel) {
+    if (channel->type == IHS_SessionChannelTypeDataVideo) {
+        IHS_SessionCounterAdd(channel->session->counters.lostReports, 1);
+    }
     CStreamDataLostMsg message = CSTREAM_DATA_LOST_MSG__INIT;
     IHS_SessionPacket packet;
     IHS_SessionChannelInitializePacket(channel, &packet, IHS_SessionPacketTypeUnreliable, true, IHS_PACKET_ID_NEXT);
