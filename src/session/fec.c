@@ -144,6 +144,10 @@ bool IHS_SessionFECAdd(IHS_SessionFEC *fec, const IHS_SessionPacket *shard, IHS_
         group->dataShards = (uint16_t) dataShards;
         group->parityShards = parityShards;
         group->shards = calloc(dataShards + parityShards, shardSize);
+        if (group->shards == NULL) {
+            memset(group, 0, sizeof(FECGroup));
+            return false;
+        }
     } else if (group->packetId != id || group->length != length || group->shardSize != shardSize ||
                group->parityShards != parityShards) {
         return false;
