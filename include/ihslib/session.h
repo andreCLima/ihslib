@@ -58,6 +58,8 @@ typedef struct IHS_SessionConfig {
      */
     int maxWidth;
     int maxHeight;
+    /** Frames per second the client can show; 0 keeps 59.94. */
+    int maxFramerate;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {

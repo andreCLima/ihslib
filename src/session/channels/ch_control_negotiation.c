@@ -123,10 +123,12 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
     config.has_selected_video_codec = videoCodec != k_EStreamVideoCodecNone;
     config.selected_video_codec = videoCodec;
 
+    // 59.94 unless the app asks for more, in 1/100 fps.
+    uint32_t framerateNum = ihsConf.maxFramerate > 0 ? (uint32_t) ihsConf.maxFramerate * 100 : 5994;
     CStreamVideoMode availableVideoMode = CSTREAM_VIDEO_MODE__INIT;
     availableVideoMode.width = 1920;
     availableVideoMode.height = 1080;
-    PROTOBUF_C_SET_VALUE(availableVideoMode, refresh_rate_numerator, 5994);
+    PROTOBUF_C_SET_VALUE(availableVideoMode, refresh_rate_numerator, framerateNum);
     PROTOBUF_C_SET_VALUE(availableVideoMode, refresh_rate_denominator, 100);
 
     CStreamVideoMode *availableVideoModes[] = {&availableVideoMode};
@@ -155,7 +157,7 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
         PROTOBUF_C_SET_VALUE(clientConfig, enable_microphone_streaming, true);
     }
     PROTOBUF_C_SET_VALUE(clientConfig, enable_video_streaming, true);
-    PROTOBUF_C_SET_VALUE(clientConfig, maximum_framerate_numerator, 5994);
+    PROTOBUF_C_SET_VALUE(clientConfig, maximum_framerate_numerator, framerateNum);
     PROTOBUF_C_SET_VALUE(clientConfig, maximum_framerate_denominator, 100);
     // Field 6 is desired_bitrate_kbps in current Steam; ihslib's copy still calls it maximum.
     int bitrateKbps = ihsConf.bitrateKbps != 0 ? ihsConf.bitrateKbps : 30000;
