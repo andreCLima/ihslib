@@ -75,6 +75,12 @@ IHS_QueueItem *IHS_QueuePoll(IHS_Queue *queue);
 IHS_QueueItem *IHS_QueuePollBy(IHS_Queue *queue, IHS_QueuePredicateFunction *predicate, void *predicateContext);
 
 /**
+ * Find the first item for which \p predicate returns true, and leave it in the queue.
+ * @return The item, or NULL if none matched
+ */
+IHS_QueueItem *IHS_QueueFindBy(IHS_Queue *queue, IHS_QueuePredicateFunction *predicate, void *predicateContext);
+
+/**
  * Iterate through all items by calling \p predicate. If it returns true, remove the item from the queue after calling
  * \p destroy. The memory allocated for item will be freed.
  * @param queue

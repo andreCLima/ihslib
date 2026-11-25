@@ -112,6 +112,18 @@ IHS_QueueItem *IHS_QueuePollBy(IHS_Queue *queue, IHS_QueuePredicateFunction *pre
     return NULL;
 }
 
+IHS_QueueItem *IHS_QueueFindBy(IHS_Queue *queue, IHS_QueuePredicateFunction *predicate, void *predicateContext) {
+    assert(queue != NULL);
+    assert(predicate != NULL);
+    for (QueueNode *cur = queue->head; cur != NULL; cur = cur->next) {
+        IHS_QueueItem *item = ItemFromNode(cur);
+        if (predicate(item, predicateContext)) {
+            return item;
+        }
+    }
+    return NULL;
+}
+
 size_t IHS_QueuePollEach(IHS_Queue *queue, IHS_QueuePredicateFunction *predicate, void *predicateContext,
                          IHS_QueueConsumerFunction *destroy, void *destroyContext) {
     assert(queue != NULL);

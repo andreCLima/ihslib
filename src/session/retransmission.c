@@ -29,10 +29,16 @@
 #define RETRANSMISSION_INTERVAL 10
 #define RETRANSMISSION_ATTEMPTS 20
 
+/*
+ * A pending packet belongs to its timer task: the task's end callback takes it out of the queue
+ * and frees it, on the timer thread. An ACK only marks it, under the lock, and the task then
+ * skips the resend. (Cancelling used to take it out and stop the task from the receive thread;
+ * when the ACK came as the timer fired, which on Wi-Fi it often does, both threads freed it.)
+ */
 typedef struct IHS_QueueItem {
     IHS_SessionPacket packet;
-    IHS_TimerTask *task;
     IHS_SessionRetransmission *retransmission;
+    bool acked;
 } PendingRetransmission;
 
 typedef struct RetransmissionQuery {
@@ -73,17 +79,20 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
     PendingRetransmission *pending = IHS_QueueItemObtain(retransmission->queue);
     pending->packet = *packet;
     pending->retransmission = retransmission;
+    pending->acked = false;
     pending->packet.header.retransmitCount++;
     IHS_BufferTransferOwnership(&packet->body, &pending->packet.body);
-    pending->task = IHS_TimerTaskStart(retransmission->session->timers, RetransmissionTimerRun, RetransmissionTimerEnd,
-                                       RETRANSMISSION_INTERVAL, pending);
-    IHS_MutexLock(retransmission->lock);
-    IHS_QueueAppend(retransmission->queue, pending);
-    IHS_MutexUnlock(retransmission->lock);
     IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
                    "Queued Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
                    pending->packet.header.channelId, pending->packet.header.packetId,
                    pending->packet.header.fragmentId, pending->packet.header.retransmitCount);
+    // In the queue before its task starts, so the end callback always finds it there. If the
+    // timer is already shutting down, no task starts and Deinit frees the item.
+    IHS_MutexLock(retransmission->lock);
+    IHS_QueueAppend(retransmission->queue, pending);
+    IHS_MutexUnlock(retransmission->lock);
+    IHS_TimerTaskStart(retransmission->session->timers, RetransmissionTimerRun, RetransmissionTimerEnd,
+                       RETRANSMISSION_INTERVAL, pending);
     return true;
 }
 
@@ -95,16 +104,23 @@ bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_Ses
             .fragmentId = fragmentId,
     };
     IHS_MutexLock(retransmission->lock);
-    PendingRetransmission *match = IHS_QueuePollBy(retransmission->queue, RetransmissionPacketPredicate, &query);
+    PendingRetransmission *match = IHS_QueueFindBy(retransmission->queue, RetransmissionPacketPredicate, &query);
+    uint8_t retransmitCount = 0;
+    uint32_t sendTimestamp = 0;
+    if (match != NULL) {
+        match->acked = true;
+        retransmitCount = match->packet.header.retransmitCount;
+        sendTimestamp = match->packet.header.sendTimestamp;
+    }
     IHS_MutexUnlock(retransmission->lock);
     if (match == NULL) {
         return false;
     }
-    if (match->packet.header.retransmitCount == 1) {
+    if (retransmitCount == 1) {
         // Sent once (the queued copy counts 1), so the ACK can only be for that send. Smoothed
         // like TCP's SRTT, by 1/8 per sample.
         IHS_Session *session = retransmission->session;
-        uint32_t sample = IHS_SessionPacketTimestamp() - match->packet.header.sendTimestamp;
+        uint32_t sample = IHS_SessionPacketTimestamp() - sendTimestamp;
         if (sample == 0) {
             sample = 1;  // 0 means not measured
         }
@@ -112,33 +128,32 @@ bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_Ses
         IHS_SessionCounterSet(session->counters.roundTrip,
                               rtt == 0 ? sample : (uint32_t) ((int64_t) rtt + ((int64_t) sample - rtt) / 8));
     }
-    if (match->task != NULL) {
-        IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
-                       "Cancelling Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
-                       channelId, packetId, fragmentId, match->packet.header.retransmitCount);
-        IHS_TimerTask *task = match->task;
-        match->task = NULL;
-        IHS_TimerTaskStopImmediate(task);
-    }
+    IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
+                   "Cancelling Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
+                   channelId, packetId, fragmentId, retransmitCount);
     return true;
 }
 
 static void RetransmissionQueueItemDestroy(PendingRetransmission *item, void *context) {
     (void) context;
-    IHS_TimerTask *task = item->task;
-    item->task = NULL;
-    if (task != NULL) {
-        IHS_TimerTaskStopImmediate(task);
-    }
+    // The session destroys its timer first, and every task's end callback takes its item out,
+    // so what is left here never had a task.
+    IHS_SessionPacketClear(&item->packet, true);
 }
 
 static uint64_t RetransmissionTimerRun(int runCount, void *context) {
     (void) runCount;
     PendingRetransmission *pending = context;
     IHS_SessionRetransmission *retransmission = pending->retransmission;
-    IHS_SessionPacket *packet = &pending->packet;
-    IHS_SessionQueuePacket(retransmission->session, packet, packet->header.retransmitCount < RETRANSMISSION_ATTEMPTS);
-    assert(packet->body.data == NULL);
+    IHS_MutexLock(retransmission->lock);
+    bool acked = pending->acked;
+    IHS_MutexUnlock(retransmission->lock);
+    if (!acked) {
+        IHS_SessionPacket *packet = &pending->packet;
+        IHS_SessionQueuePacket(retransmission->session, packet,
+                               packet->header.retransmitCount < RETRANSMISSION_ATTEMPTS);
+        assert(packet->body.data == NULL);
+    }
     return 0;
 }
 
@@ -152,6 +167,7 @@ static void RetransmissionTimerEnd(void *context) {
     IHS_MutexLock(retransmission->lock);
     IHS_QueuePollBy(retransmission->queue, RetransmissionIdenticalPredicate, pending);
     IHS_MutexUnlock(retransmission->lock);
+    // Out of the queue, so no ACK can reach it now. Its body is still here if it was acknowledged.
     IHS_SessionPacketClear(&pending->packet, true);
     IHS_QueueItemFree(pending);
 }
@@ -162,7 +178,7 @@ static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *
 
 static bool RetransmissionPacketPredicate(PendingRetransmission *item, void *context) {
     RetransmissionQuery *query = context;
-    return item->packet.header.channelId == query->channelId &&
+    return !item->acked && item->packet.header.channelId == query->channelId &&
            item->packet.header.packetId == query->packetId &&
            item->packet.header.fragmentId == query->fragmentId;
 }
