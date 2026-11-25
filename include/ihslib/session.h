@@ -231,6 +231,8 @@ typedef struct IHS_SessionStreamStats {
     uint32_t fecRecovered;
     /** Video messages lost despite FEC (more shards missing than the parity covers). */
     uint32_t fecUnrecoverable;
+    /** The session ended because the host went silent (no packets for 10 s), not by request. */
+    bool timedOut;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

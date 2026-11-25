@@ -55,6 +55,12 @@ static void SessionFinalized(IHS_Base *base, void *context);
 
 static void SessionSendWorker(void *context);
 
+static uint64_t LivenessRun(int runCount, void *context);
+
+/* A connected host sends video, audio and stats all the time; this long without a packet means
+ * it is gone (asleep, unplugged, out of range). */
+#define HOST_SILENCE_TIMEOUT_MS 10000u
+
 static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket *packet);
 
 static void QueuedPacketDestroy(QueuedPacket *queued, void *unused);
@@ -207,6 +213,7 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->videoPacketsLost += IHS_SessionCounterGet(session->counters.fecShardsLost);
     stats->fecRecovered = IHS_SessionCounterGet(session->counters.fecRecovered);
     stats->fecUnrecoverable = IHS_SessionCounterGet(session->counters.fecUnrecoverable);
+    stats->timedOut = IHS_SessionCounterGet(session->timedOut);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
@@ -218,6 +225,7 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
         IHS_SessionLog(session, IHS_LogLevelDebug, "Session", "Discarding packet. Reason: %u", ret);
         return;
     }
+    IHS_SessionCounterSet(session->lastReceivedMs, (uint32_t) IHS_TimerNow());
 
     IHS_SessionChannelId channelId = packet.header.channelId;
     IHS_SessionPacketType packetType = packet.header.type;
@@ -253,6 +261,9 @@ static void SessionInitialized(IHS_Base *base, void *context) {
     session->state.connectionState = IHS_SessionConnectionStateConnecting;
     IHS_BaseUnlock(&session->base);
 
+    IHS_SessionCounterSet(session->lastReceivedMs, (uint32_t) IHS_TimerNow());
+    session->livenessTask = IHS_TimerTaskStart(session->timers, LivenessRun, NULL, 1000, session);
+
     /* crc32c(b'Connect') */
     const static uint8_t body[4] = {0xc7, 0x3d, 0x8f, 0x3c};
 
@@ -267,11 +278,32 @@ static void SessionInitialized(IHS_Base *base, void *context) {
 static void SessionFinalized(IHS_Base *base, void *context) {
     (void) context;
     IHS_Session *session = (IHS_Session *) base;
+    if (session->livenessTask != NULL) {
+        // Synchronous, so the task can't run on the timer thread after this.
+        IHS_TimerTaskStopImmediate(session->livenessTask);
+        session->livenessTask = NULL;
+    }
     IHS_ThreadJoin(session->sendThread);
     session->sendThread = NULL;
     if (session->callbacks.session && session->callbacks.session->finalized) {
         session->callbacks.session->finalized(session, session->callbackContexts.session);
     }
+}
+
+// Never ends by itself (returns its interval), so SessionFinalized can always stop it.
+static uint64_t LivenessRun(int runCount, void *context) {
+    (void) runCount;
+    IHS_Session *session = context;
+    IHS_BaseLock(&session->base);
+    bool connected = session->state.connectionState == IHS_SessionConnectionStateConnected;
+    IHS_BaseUnlock(&session->base);
+    uint32_t silent = (uint32_t) IHS_TimerNow() - IHS_SessionCounterGet(session->lastReceivedMs);
+    if (connected && silent >= HOST_SILENCE_TIMEOUT_MS && !IHS_SessionCounterGet(session->timedOut)) {
+        IHS_SessionCounterSet(session->timedOut, true);
+        IHS_SessionLog(session, IHS_LogLevelWarn, "Session", "Nothing from the host for %u ms, disconnecting", silent);
+        IHS_SessionDisconnect(session);
+    }
+    return 1000;
 }
 
 static void SessionSendWorker(void *context) {

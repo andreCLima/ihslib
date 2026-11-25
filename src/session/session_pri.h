@@ -108,6 +108,10 @@ struct IHS_Session {
     IHS_HIDManager *hidManager;
     struct IHS_FrameStatsAggregator *frameStats;
     IHS_SessionCounters counters;
+    /* Liveness: IHS_TimerNow() of the last packet received (low 32 bits), checked every second. */
+    uint32_t lastReceivedMs;
+    bool timedOut;
+    IHS_TimerTask *livenessTask;
     struct {
         const IHS_StreamSessionCallbacks *session;
         const IHS_StreamAudioCallbacks *audio;
