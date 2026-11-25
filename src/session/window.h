@@ -60,6 +60,11 @@ uint16_t IHS_SessionPacketsWindowDiscard(IHS_SessionPacketsWindow *window, uint3
  */
 bool IHS_SessionPacketsWindowContiguousId(const IHS_SessionPacketsWindow *window, uint16_t *id);
 
+/**
+ * Drop every packet in the window. The next packet added starts it over.
+ */
+void IHS_SessionPacketsWindowReset(IHS_SessionPacketsWindow *window);
+
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame);
 
 uint16_t IHS_SessionPacketsWindowAvailable(const IHS_SessionPacketsWindow *window);

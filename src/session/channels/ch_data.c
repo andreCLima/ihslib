@@ -82,7 +82,10 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     if (!IHS_SessionPacketsWindowAdd(dataCh->window, packet)) {
         IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data", "%s channel items overflow! Available: %u",
                        DataChannelName(channel->type), IHS_SessionPacketsWindowAvailable(dataCh->window));
-        IHS_SessionPacketsWindowDiscard(dataCh->window, 0);
+        // Discarding by timestamp could free nothing here (it keeps every frame that starts as
+        // late as the newest packet), and every later packet overflowed again. Start over.
+        IHS_SessionPacketsWindowReset(dataCh->window);
+        IHS_SessionPacketsWindowAdd(dataCh->window, packet);
         IHS_SessionChannelDataLost(channel);
     }
     IHS_CondSignal(dataCh->windowCond);
@@ -127,16 +130,20 @@ static void DataThreadWorker(IHS_SessionChannelData *channel) {
     IHS_SessionLog(channel->base.session, IHS_LogLevelInfo, "Data", "%s channel started", channelName);
     while (!channel->interrupted) {
         IHS_MutexLock(channel->windowLock);
-        uint16_t discarded = IHS_SessionPacketsWindowDiscard(channel->window, DISCARD_DIFF);
-        if (discarded > 0) {
-            IHS_SessionLog(channel->base.session, IHS_LogLevelDebug, channelName, "Discarded %u packets", discarded);
-        }
         bool hasFrame;
-        while (!(hasFrame = IHS_SessionPacketsWindowPoll(channel->window, &frame))) {
-            IHS_CondWait(channel->windowCond, channel->windowLock);
-            if (channel->interrupted) {
+        for (;;) {
+            // Discard on every wake-up, not once per frame: a frame that lost a packet never
+            // completes, and polling alone would wait behind it until the window overflowed.
+            uint16_t discarded = IHS_SessionPacketsWindowDiscard(channel->window, DISCARD_DIFF);
+            if (discarded > 0) {
+                IHS_SessionLog(channel->base.session, IHS_LogLevelDebug, channelName, "Discarded %u packets",
+                               discarded);
+            }
+            hasFrame = IHS_SessionPacketsWindowPoll(channel->window, &frame);
+            if (hasFrame || channel->interrupted) {
                 break;
             }
+            IHS_CondWait(channel->windowCond, channel->windowLock);
         }
         IHS_MutexUnlock(channel->windowLock);
         if (hasFrame) {

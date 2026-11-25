@@ -87,8 +87,10 @@ bool IHS_SessionPacketsWindowAdd(IHS_SessionPacketsWindow *window, IHS_SessionPa
     if (tailOffset > window->capacity) {
         return true;
     }
-    /* Large offset means overflow, abort processing and hangup */
-    if (tailOffset > (int) IHS_SessionPacketsWindowAvailable(window)) {
+    /* Large offset means overflow, abort processing and hangup. One slot always stays free: in a
+     * full window whose head isn't at slot 0, tail.pos + 1 == head.pos, which Size reads as empty,
+     * and Poll and Discard would never touch it again. */
+    if (tailOffset >= (int) IHS_SessionPacketsWindowAvailable(window)) {
         return false;
     }
     const int writePos = (window->tail.pos + tailOffset + window->capacity) % window->capacity;
@@ -206,6 +208,17 @@ bool IHS_SessionPacketsWindowContiguousId(const IHS_SessionPacketsWindow *window
     }
     *id = window->tail.id;
     return true;
+}
+
+void IHS_SessionPacketsWindowReset(IHS_SessionPacketsWindow *window) {
+    for (int i = 0; i < window->capacity; i++) {
+        if (FrameItemIsUsed(&window->data[i])) {
+            FrameItemRecycle(&window->data[i]);
+        }
+    }
+    window->head.pos = 0;
+    window->tail.pos = -1;
+    window->tail.id = 0;
 }
 
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame) {
