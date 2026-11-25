@@ -196,6 +196,14 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
         PROTOBUF_C_SET_VALUE(clientCaps, supports_video_hevc, true);
     }
     PROTOBUF_C_SET_VALUE(clientCaps, form_factor, k_EStreamDeviceFormFactorTV);
+    // HDR10 (5) is newer than ihslib's copy of EStreamColorspace. Without a list Steam picks an SDR
+    // colorspace, so the list is only sent to offer HDR10, with the SDR ones next to it.
+    EStreamColorspace colorspaces[] = {k_EStreamColorspace_BT709, k_EStreamColorspace_BT601,
+                                       (EStreamColorspace) 5};
+    if (ihsConf.enableHdr) {
+        clientCaps.n_supported_colorspaces = sizeof(colorspaces) / sizeof(colorspaces[0]);
+        clientCaps.supported_colorspaces = colorspaces;
+    }
 
     // supported_video_codecs (15) is newer than ihslib's copy of the protocol, where the caps only
     // have supports_video_hevc, which current Steam marks obsolete. Repeated, unpacked: one

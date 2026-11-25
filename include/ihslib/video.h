@@ -43,6 +43,17 @@ typedef enum IHS_StreamVideoCodec {
     IHS_StreamVideoCodecORBX2 = 7,
 } IHS_StreamVideoCodec;
 
+/** The video stream's colorspace, as Steam names it (EStreamColorspace). */
+typedef enum IHS_StreamVideoColorspace {
+    IHS_StreamVideoColorspaceUnknown = 0,
+    IHS_StreamVideoColorspaceBT601 = 1,
+    IHS_StreamVideoColorspaceBT601Full = 2,
+    IHS_StreamVideoColorspaceBT709 = 3,
+    IHS_StreamVideoColorspaceBT709Full = 4,
+    /** HDR10: 10-bit, BT.2020 primaries, PQ transfer. */
+    IHS_StreamVideoColorspaceHDR10 = 5,
+} IHS_StreamVideoColorspace;
+
 typedef enum IHS_StreamVideoFrameFlag {
     IHS_StreamVideoFrameNone = 0x00,
     IHS_StreamVideoFrameKeyFrame = 0x01,
@@ -53,6 +64,8 @@ typedef struct IHS_StreamVideoConfig {
     IHS_StreamVideoCodec codec;
     uint8_t *codecData;
     size_t codecDataLen;
+    /** What the host says it sends; Unknown when it doesn't say. */
+    IHS_StreamVideoColorspace colorspace;
 } IHS_StreamVideoConfig;
 
 typedef enum IHS_StreamVideoSubmitResult {

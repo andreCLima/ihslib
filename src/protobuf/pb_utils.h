@@ -41,3 +41,26 @@
 
 #define IHS_UNPACK_BUFFER_SIZE(unpack_fn, buffer, size) unpack_fn(NULL, (size), IHS_BufferPointer((buffer)))
 
+/**
+ * The value of a varint field that ihslib's copy of the protocol doesn't know yet. protobuf-c keeps
+ * such fields among the message's unknown fields when it unpacks. Returns fallback when the field
+ * isn't there.
+ */
+static inline uint64_t IHS_UnknownVarint(const ProtobufCMessage *message, uint32_t field, uint64_t fallback) {
+    for (unsigned i = 0; i < message->n_unknown_fields; i++) {
+        const ProtobufCMessageUnknownField *f = &message->unknown_fields[i];
+        if (f->tag != field || f->wire_type != PROTOBUF_C_WIRE_TYPE_VARINT) {
+            continue;
+        }
+        uint64_t value = 0;
+        for (size_t b = 0; b < f->len && b < 10; b++) {
+            value |= (uint64_t) (f->data[b] & 0x7f) << (7 * b);
+            if (!(f->data[b] & 0x80)) {
+                break;
+            }
+        }
+        return value;
+    }
+    return fallback;
+}
+

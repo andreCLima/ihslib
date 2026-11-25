@@ -160,6 +160,10 @@ static void ChannelVideoInit(IHS_SessionChannel *channel, const void *config) {
     videoCh->config.width = message->width;
     videoCh->config.height = message->height;
     videoCh->config.codec = (IHS_StreamVideoCodec) message->codec;
+    // colorspace (6) is newer than ihslib's copy of the protocol: protobuf-c keeps it as an unknown
+    // field.
+    videoCh->config.colorspace = (IHS_StreamVideoColorspace) IHS_UnknownVarint(&message->base, 6,
+                                                                               IHS_StreamVideoColorspaceUnknown);
     if (message->has_codec_data) {
         videoCh->config.codecDataLen = message->codec_data.len;
         videoCh->config.codecData = malloc(videoCh->config.codecDataLen);

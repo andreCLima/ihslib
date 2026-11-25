@@ -88,6 +88,8 @@ typedef struct IHS_StreamingRequest {
     } maxResolution;
     int32_t audioChannelCount;
     IHS_StreamInterface streamingInterface;
+    /** The display can show HDR (see IHS_SessionConfig.enableHdr). */
+    bool displayHdr;
 } IHS_StreamingRequest;
 
 typedef struct IHS_ClientDiscoveryCallbacks {

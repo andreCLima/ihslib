@@ -60,6 +60,12 @@ typedef struct IHS_SessionConfig {
     int maxHeight;
     /** Frames per second the client can show; 0 keeps 59.94. */
     int maxFramerate;
+    /**
+     * The display can show HDR: HDR10 joins the colorspaces the client supports. Steam then sends
+     * HDR10 (10-bit HEVC) when the host's display is in HDR, and IHS_StreamVideoConfig.colorspace
+     * says which colorspace it chose. Set the streaming request's displayHdr too.
+     */
+    bool enableHdr;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {

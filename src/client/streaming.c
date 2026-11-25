@@ -221,6 +221,15 @@ static uint64_t StreamingRequestTimer(int runCount, void *context) {
     EStreamTransport transports[] = {k_EStreamTransportUDP};
     message.supported_transport = transports;
 
+    // display_hdr (23) is newer than ihslib's copy of the protocol; protobuf-c packs unknown fields
+    // as they are.
+    uint8_t hdrOn = 1;
+    ProtobufCMessageUnknownField hdrField = {23, PROTOBUF_C_WIRE_TYPE_VARINT, 1, &hdrOn};
+    if (request.displayHdr) {
+        message.base.n_unknown_fields = 1;
+        message.base.unknown_fields = &hdrField;
+    }
+
     IHS_ClientLog(client, IHS_LogLevelDebug, "Client", "Sending streaming request packet to host %s", host.hostname);
     IHS_ClientSend(client, host.address, k_ERemoteDeviceStreamingRequest, (ProtobufCMessage *) &message);
     return 3000;
