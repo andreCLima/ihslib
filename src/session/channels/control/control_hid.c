@@ -507,7 +507,10 @@ static void HandleDeviceStartInputReports(IHS_SessionChannel *channel, IHS_HIDMa
         return;
     }
 
+    // Under the device lock: the poll task reads the length to know the host started reports.
+    IHS_MutexLock(managed->lock);
     IHS_HIDReportHolderSetReportLength(&managed->reportHolder, cmd->length);
+    IHS_MutexUnlock(managed->lock);
     if (IHS_HIDDeviceStartInputReports(managed->device, cmd->length) == 0) {
         // Here we assume this managed has generated one full report, and send it right away.
         // This design may require change later...

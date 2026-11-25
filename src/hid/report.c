@@ -63,8 +63,11 @@ void IHS_HIDReportHolderDeinit(IHS_HIDReportHolder *holder) {
 // Capture `current` as the pending state for the next send and decide whether to skip
 // because the bytes are byte-identical to what was last flushed. Allocates the two scratch
 // buffers lazily and grows them on demand. Returns true if the caller should drop.
-static bool DedupAndStash(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len) {
-    if (holder->lastSent != NULL && holder->lastSentLen == len &&
+// `allowDrop` is false for full reports: the host asks for one (or we send one on a timer) exactly
+// because its copy of the state may be wrong, and the state we hold being unchanged says nothing
+// about that. Dropping it would leave a host that lost a delta stuck on the wrong state.
+static bool DedupAndStash(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len, bool allowDrop) {
+    if (allowDrop && holder->lastSent != NULL && holder->lastSentLen == len &&
         memcmp(holder->lastSent, current, len) == 0) {
         return true;
     }
@@ -84,7 +87,7 @@ void IHS_HIDReportHolderSetReportLength(IHS_HIDReportHolder *holder, size_t repo
 
 void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *current, size_t len) {
     assert(holder->reportLength >= len);
-    if (DedupAndStash(holder, current, len)) {
+    if (DedupAndStash(holder, current, len, false)) {
         return;
     }
     uint8_t *data = IHS_BufferPointerForAppend(&holder->dataBuffer, len);
@@ -103,7 +106,7 @@ void IHS_HIDReportHolderAddFull(IHS_HIDReportHolder *holder, const uint8_t *curr
 
 void IHS_HIDReportHolderAddDelta(IHS_HIDReportHolder *holder, const uint8_t *previous, const uint8_t *current,
                                  size_t len) {
-    if (DedupAndStash(holder, current, len)) {
+    if (DedupAndStash(holder, current, len, true)) {
         return;
     }
     uint8_t *data = IHS_BufferPointerForAppend(&holder->dataBuffer, holder->reportLength);

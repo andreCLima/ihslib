@@ -36,6 +36,13 @@
  * button press waits 2 ms on average for it instead of 4. */
 #define HID_POLL_INTERVAL_MS 4u
 
+/* A full report this often. The delta reports are reliable, but the host can still end up with a
+ * wrong state (a retransmission given up on, a delta whose CRC the host rejected, a stall that
+ * ended with a button release lost), and nothing else tells us. A full report is 48 bytes plus
+ * framing, so once a second is free, and it caps how long a stuck button can last. Counted in
+ * poll ticks, not read from a clock: the timer thread is the only user. */
+#define HID_FULL_REPORT_TICKS (1000u / HID_POLL_INTERVAL_MS)
+
 static uint64_t HIDPollTick(int runCount, void *context);
 
 IHS_HIDManager *IHS_HIDManagerCreate() {
@@ -238,6 +245,27 @@ static uint64_t HIDPollTick(int runCount, void *context) {
             IHS_SessionLog(manager->session, IHS_LogLevelInfo, "HID",
                            "Device id=%u poll failed (%d), closing", managed->id, result);
             IHS_HIDManagedDeviceClose(managed);
+        }
+    }
+    // Periodic resync. The managed struct of a device closed meanwhile stays valid, but its inner
+    // device is freed on close, so skip closed slots first. The window between that check and
+    // the call is the same one the poll above already has with the SDL event thread.
+    if (++manager->fullReportTicks >= HID_FULL_REPORT_TICKS) {
+        manager->fullReportTicks = 0;
+        for (size_t i = 0; i < count; ++i) {
+            IHS_HIDManagedDevice *managed = snapshot[i];
+            IHS_MutexLock(manager->devicesLock);
+            bool closed = managed->closed;
+            IHS_MutexUnlock(manager->devicesLock);
+            if (closed) continue;
+            IHS_MutexLock(managed->lock);
+            // Only after the host sent StartInputReports (it sets the length): before that it is
+            // not reading this device, and AddFull asserts the length covers the 48-byte state.
+            bool started = managed->reportHolder.reportLength >= 48;
+            IHS_MutexUnlock(managed->lock);
+            if (started && IHS_HIDDeviceRequestFullReport(managed->device) == 0) {
+                anyData = true;
+            }
         }
     }
     free(snapshot);

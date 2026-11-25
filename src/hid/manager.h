@@ -55,6 +55,10 @@ struct IHS_HIDManager {
      * IHS_HIDManagerAddProvider call; destroyed in IHS_HIDManagerDestroy.
      */
     IHS_TimerTask *pollTimer;
+    /**
+     * Poll ticks since the last periodic full report. Only the poll task touches it.
+     */
+    uint32_t fullReportTicks;
 };
 
 struct IHS_HIDManagedDevice {
