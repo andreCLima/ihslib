@@ -103,8 +103,10 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     assert(type == IHS_SessionPacketTypeUnreliable || type == IHS_SessionPacketTypeUnreliableFrag);
     IHS_MutexLock(dataCh->windowLock);
     if (!IHS_SessionPacketsWindowAdd(dataCh->window, packet)) {
-        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data", "%s channel items overflow! Available: %u",
-                       DataChannelName(channel->type), IHS_SessionPacketsWindowAvailable(dataCh->window));
+        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data",
+                       "%s channel: packet %u doesn't fit the window (%u free), starting over",
+                       DataChannelName(channel->type), packet->header.packetId,
+                       IHS_SessionPacketsWindowAvailable(dataCh->window));
         // Discarding by timestamp could free nothing here (it keeps every frame that starts as
         // late as the newest packet), and every later packet overflowed again. Start over.
         IHS_SessionPacketsWindowReset(dataCh->window);

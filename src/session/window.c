@@ -83,9 +83,11 @@ bool IHS_SessionPacketsWindowAdd(IHS_SessionPacketsWindow *window, IHS_SessionPa
     if (tailOffset < 0 && -tailOffset > IHS_SessionPacketsWindowSize(window)) {
         return true;
     }
-    /* Not sure why but the offset is significantly larger than window capacity. Ignore it reset */
+    /* Further ahead than the window holds: the stream went on without us (on Wi-Fi, a gap of a few
+     * seconds), so refuse it as an overflow and let the channel start over from it. Ignoring it,
+     * as before, ignored every packet after it as well, and the channel stayed dead. */
     if (tailOffset > window->capacity) {
-        return true;
+        return false;
     }
     /* Large offset means overflow, abort processing and hangup. One slot always stays free: in a
      * full window whose head isn't at slot 0, tail.pos + 1 == head.pos, which Size reads as empty,
