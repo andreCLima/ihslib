@@ -221,6 +221,48 @@ void IHS_SessionPacketsWindowReset(IHS_SessionPacketsWindow *window) {
     window->tail.id = 0;
 }
 
+/* True if the frame starting at pos (unwrapped) has all its packets within the next `size` slots. */
+static bool FrameCompleteAt(const IHS_SessionPacketsWindow *window, int pos, uint16_t size) {
+    const IHS_SessionWindowItem *head = &window->data[pos % window->capacity];
+    if (!FrameItemIsUsed(head) || !FrameItemIsHead(head)) {
+        return false;
+    }
+    int packetsCount = 1 + head->header.fragmentId;
+    if (packetsCount > size) {
+        return false;
+    }
+    for (int i = 1; i < packetsCount; i++) {
+        if (!FrameItemIsUsed(&window->data[(pos + i) % window->capacity])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+uint16_t IHS_SessionPacketsWindowSkipLost(IHS_SessionPacketsWindow *window) {
+    uint16_t size = IHS_SessionPacketsWindowSize(window);
+    if (size == 0 || FrameCompleteAt(window, window->head.pos, size)) {
+        return 0;
+    }
+    for (uint16_t offset = 1; offset < size; offset++) {
+        if (!FrameCompleteAt(window, window->head.pos + offset, (uint16_t) (size - offset))) {
+            continue;
+        }
+        for (uint16_t i = 0; i < offset; i++) {
+            IHS_SessionWindowItem *item = &window->data[(window->head.pos + i) % window->capacity];
+            if (FrameItemIsUsed(item)) {
+                FrameItemRecycle(item);
+            }
+        }
+        window->head.pos = window->head.pos + offset;
+        if (window->head.pos > window->capacity) {
+            window->head.pos = window->head.pos % window->capacity;
+        }
+        return offset;
+    }
+    return 0;
+}
+
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame) {
     IHS_SessionFrameClear(frame, false);
 }

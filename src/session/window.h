@@ -65,6 +65,14 @@ bool IHS_SessionPacketsWindowContiguousId(const IHS_SessionPacketsWindow *window
  */
 void IHS_SessionPacketsWindowReset(IHS_SessionPacketsWindow *window);
 
+/**
+ * If the frame at the head can't be polled but a later frame has all its packets, drop everything
+ * before that later frame. For unreliable data only: a missing packet is never resent, so once a
+ * later frame is complete the head frame is lost, and waiting for it only holds up the rest.
+ * @return number of slots dropped, 0 if nothing was
+ */
+uint16_t IHS_SessionPacketsWindowSkipLost(IHS_SessionPacketsWindow *window);
+
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame);
 
 uint16_t IHS_SessionPacketsWindowAvailable(const IHS_SessionPacketsWindow *window);

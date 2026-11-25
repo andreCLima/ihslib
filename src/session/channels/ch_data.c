@@ -140,6 +140,17 @@ static void DataThreadWorker(IHS_SessionChannelData *channel) {
                                discarded);
             }
             hasFrame = IHS_SessionPacketsWindowPoll(channel->window, &frame);
+            if (!hasFrame) {
+                // A later frame is already complete: the head frame lost a packet, and only the
+                // next keyframe can repair the picture. Move on now, as Steam's own client does,
+                // so the video channel sees the gap and asks for one.
+                uint16_t skipped = IHS_SessionPacketsWindowSkipLost(channel->window);
+                if (skipped > 0) {
+                    IHS_SessionLog(channel->base.session, IHS_LogLevelDebug, channelName,
+                                   "Skipped %u packets of a lost frame", skipped);
+                    hasFrame = IHS_SessionPacketsWindowPoll(channel->window, &frame);
+                }
+            }
             if (hasFrame || channel->interrupted) {
                 break;
             }
