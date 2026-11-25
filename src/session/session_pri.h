@@ -132,6 +132,12 @@ struct IHS_Session {
 
 void IHS_SessionInterrupt(IHS_Session *session);
 
+/**
+ * Milliseconds from lastReceived to now, both (uint32_t) IHS_TimerNow() readings. Negative when
+ * lastReceived is the newer one, which happens when a packet arrives during the reading.
+ */
+int32_t IHS_SessionSilenceMs(uint32_t now, uint32_t lastReceived);
+
 bool IHS_SessionSendPacket(IHS_Session *session, IHS_SessionPacket *packet);
 
 /**

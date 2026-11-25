@@ -290,6 +290,12 @@ static void SessionFinalized(IHS_Base *base, void *context) {
     }
 }
 
+int32_t IHS_SessionSilenceMs(uint32_t now, uint32_t lastReceived) {
+    // Signed: a packet can arrive between reading now and reading the last receive time, which
+    // is then 1 ms ahead. Unsigned, that came out as 4294967295 ms of silence and disconnected.
+    return (int32_t) (now - lastReceived);
+}
+
 // Never ends by itself (returns its interval), so SessionFinalized can always stop it.
 static uint64_t LivenessRun(int runCount, void *context) {
     (void) runCount;
@@ -297,10 +303,10 @@ static uint64_t LivenessRun(int runCount, void *context) {
     IHS_BaseLock(&session->base);
     bool connected = session->state.connectionState == IHS_SessionConnectionStateConnected;
     IHS_BaseUnlock(&session->base);
-    uint32_t silent = (uint32_t) IHS_TimerNow() - IHS_SessionCounterGet(session->lastReceivedMs);
-    if (connected && silent >= HOST_SILENCE_TIMEOUT_MS && !IHS_SessionCounterGet(session->timedOut)) {
+    int32_t silent = IHS_SessionSilenceMs((uint32_t) IHS_TimerNow(), IHS_SessionCounterGet(session->lastReceivedMs));
+    if (connected && silent >= (int32_t) HOST_SILENCE_TIMEOUT_MS && !IHS_SessionCounterGet(session->timedOut)) {
         IHS_SessionCounterSet(session->timedOut, true);
-        IHS_SessionLog(session, IHS_LogLevelWarn, "Session", "Nothing from the host for %u ms, disconnecting", silent);
+        IHS_SessionLog(session, IHS_LogLevelWarn, "Session", "Nothing from the host for %d ms, disconnecting", (int) silent);
         IHS_SessionDisconnect(session);
     }
     return 1000;
