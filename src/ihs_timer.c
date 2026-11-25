@@ -52,7 +52,7 @@ static struct {
     IHS_Thread *thread;
 } state = {NULL, NULL, NULL};
 
-static void TimerThreadWorker();
+static void TimerThreadWorker(void *context);
 
 static bool ItemIdentical(IHS_QueueItem *item, void *context);
 
@@ -187,7 +187,8 @@ uint64_t IHS_TimerNow() {
     return (uint64_t) tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
 }
 
-static void TimerThreadWorker() {
+static void TimerThreadWorker(void *context) {
+    (void) context;
     size_t iterated;
     do {
         IHS_MutexLock(state.lock);
