@@ -138,6 +138,8 @@ typedef struct IHS_HostInfo {
     IHS_SteamOSType ostype;
     IHS_SteamUniverse universe;
     bool gamesRunning;
+    /** First MAC address the host reports, as Steam sends it, for Wake-on-LAN; empty if none. */
+    char macAddress[32];
 } IHS_HostInfo;
 
 typedef enum IHS_LogLevel {

@@ -73,6 +73,11 @@ void IHS_ClientDiscoveryCallback(IHS_Client *client, const IHS_SocketAddress *ad
         info.gamesRunning = status->games_running;
         strncpy(info.hostname, status->hostname, sizeof(info.hostname) - 1);
         info.hostname[sizeof(info.hostname) - 1] = '\0';
+        info.macAddress[0] = '\0';
+        if (status->n_mac_addresses > 0 && status->mac_addresses[0] != NULL) {
+            strncpy(info.macAddress, status->mac_addresses[0], sizeof(info.macAddress) - 1);
+            info.macAddress[sizeof(info.macAddress) - 1] = '\0';
+        }
         if (client->callbacks.discovery && client->callbacks.discovery->discovered) {
             client->callbacks.discovery->discovered(client, &info, client->callbackContexts.discovery);
         }
