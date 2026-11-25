@@ -191,6 +191,23 @@ uint16_t IHS_SessionPacketsWindowDiscard(IHS_SessionPacketsWindow *window, uint3
     return discarded;
 }
 
+bool IHS_SessionPacketsWindowContiguousId(const IHS_SessionPacketsWindow *window, uint16_t *id) {
+    if (window->tail.pos < 0) {
+        return false;
+    }
+    /* Everything before head has been polled; the run of used slots from head on decides. */
+    uint16_t size = IHS_SessionPacketsWindowSize(window);
+    uint16_t headId = (uint16_t) (window->tail.id - size + 1);
+    for (uint16_t i = 0; i < size; i++) {
+        if (!FrameItemIsUsed(&window->data[(window->head.pos + i) % window->capacity])) {
+            *id = (uint16_t) (headId + i - 1);
+            return true;
+        }
+    }
+    *id = window->tail.id;
+    return true;
+}
+
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame) {
     IHS_SessionFrameClear(frame, false);
 }

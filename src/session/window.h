@@ -52,6 +52,14 @@ bool IHS_SessionPacketsWindowPoll(IHS_SessionPacketsWindow *window, IHS_SessionF
  */
 uint16_t IHS_SessionPacketsWindowDiscard(IHS_SessionPacketsWindow *window, uint32_t diff);
 
+/**
+ * Id of the newest packet up to which every packet has been added, whether it has been polled
+ * already or is still in the window. Steam takes an ACK as covering every earlier packet, so
+ * this is the id to acknowledge.
+ * @return false if no packet has been added yet
+ */
+bool IHS_SessionPacketsWindowContiguousId(const IHS_SessionPacketsWindow *window, uint16_t *id);
+
 void IHS_SessionPacketsWindowReleaseFrame(IHS_SessionFrame *frame);
 
 uint16_t IHS_SessionPacketsWindowAvailable(const IHS_SessionPacketsWindow *window);

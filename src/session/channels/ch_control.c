@@ -156,13 +156,19 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
     IHS_SessionPacketsWindow *window = control->framePacketWindow;
     switch (packet->header.type) {
         case IHS_SessionPacketTypeReliable:
-        case IHS_SessionPacketTypeReliableFrag:
+        case IHS_SessionPacketTypeReliableFrag: {
+            uint16_t ackId = packet->header.packetId;
             if (!IHS_SessionPacketsWindowAdd(window, packet)) {
                 IHS_SessionLog(channel->session, IHS_LogLevelError, "Control", "Frames window overflow");
                 IHS_SessionDisconnect(channel->session);
             }
-            IHS_SessionChannelPacketAck(channel, packet->header.packetId, true);
+            // Steam takes an ACK as covering every earlier packet. ACKing each packet by its own
+            // id told it that a lost one had arrived, so it was never sent again and the window
+            // waited for it until it overflowed. ACK the last packet up to which none is missing.
+            IHS_SessionPacketsWindowContiguousId(window, &ackId);
+            IHS_SessionChannelPacketAck(channel, ackId, true);
             break;
+        }
         case IHS_SessionPacketTypeACK:
         case IHS_SessionPacketTypeNACK:
             // Stop retransmit of the packet
