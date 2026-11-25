@@ -83,6 +83,10 @@ typedef struct IHS_SessionCounters {
     uint32_t lostReports;
     /* Smoothed round trip, in packet timestamp units (1/65536 s); 0 until measured. */
     uint32_t roundTrip;
+    uint32_t fecShards;
+    uint32_t fecShardsLost;
+    uint32_t fecRecovered;
+    uint32_t fecUnrecoverable;
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)

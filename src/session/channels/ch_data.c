@@ -37,6 +37,8 @@ static void DataThreadWorker(IHS_SessionChannelData *channel);
 
 static void CountVideoPacket(IHS_SessionChannelData *channel, uint16_t packetId);
 
+static void CountFEC(IHS_SessionChannelData *channel);
+
 static void DataThreadInterrupt(IHS_SessionChannelData *channel);
 
 static void ReceivedFrame(IHS_SessionChannelData *channel, IHS_SessionFrame *frame);
@@ -56,6 +58,7 @@ void IHS_SessionChannelDataInit(IHS_SessionChannel *channel, uint16_t windowCapa
     dataCh->windowLock = IHS_MutexCreate();
     dataCh->windowCond = IHS_CondCreate();
     dataCh->window = IHS_SessionPacketsWindowCreate(windowCapacity);
+    dataCh->fec = IHS_SessionFECCreate();
     dataCh->interrupted = false;
     char threadName[16];
     snprintf(threadName, 16, "IHS%s", DataChannelName(channel->type));
@@ -69,6 +72,8 @@ void IHS_SessionChannelDataDeinit(IHS_SessionChannel *channel) {
 
     IHS_ThreadJoin(dataCh->worker);
     IHS_SessionPacketsWindowDestroy(dataCh->window);
+    IHS_SessionFECDestroy(dataCh->fec);
+    dataCh->fec = NULL;
     IHS_MutexDestroy(dataCh->windowLock);
     IHS_CondDestroy(dataCh->windowCond);
     dataCh->window = NULL;
@@ -78,11 +83,24 @@ void IHS_SessionChannelDataDeinit(IHS_SessionChannel *channel) {
 void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPacket *packet) {
     IHS_SessionChannelData *dataCh = (IHS_SessionChannelData *) channel;
     assert(dataCh->window != NULL);
-    IHS_SessionPacketType type = packet->header.type;
-    assert(type == IHS_SessionPacketTypeUnreliable || type == IHS_SessionPacketTypeUnreliableFrag);
-    if (channel->type == IHS_SessionChannelTypeDataVideo) {
+    IHS_SessionPacket assembled;
+    bool fromFec = packet->header.type == IHS_SessionPacketTypeUnreliableFEC;
+    if (fromFec) {
+        // Shards go to the FEC assembler; a complete (or rebuilt) message continues as one plain
+        // Unreliable packet, so the window and the frame handling stay as they are.
+        bool complete = IHS_SessionFECAdd(dataCh->fec, packet, &assembled);
+        if (channel->type == IHS_SessionChannelTypeDataVideo) {
+            CountFEC(dataCh);
+        }
+        if (!complete) {
+            return;
+        }
+        packet = &assembled;
+    } else if (channel->type == IHS_SessionChannelTypeDataVideo) {
         CountVideoPacket(dataCh, packet->header.packetId);
     }
+    IHS_SessionPacketType type = packet->header.type;
+    assert(type == IHS_SessionPacketTypeUnreliable || type == IHS_SessionPacketTypeUnreliableFrag);
     IHS_MutexLock(dataCh->windowLock);
     if (!IHS_SessionPacketsWindowAdd(dataCh->window, packet)) {
         IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data", "%s channel items overflow! Available: %u",
@@ -96,6 +114,10 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     IHS_CondSignal(dataCh->windowCond);
     IHS_MutexUnlock(dataCh->windowLock);
     dataCh->lastPacketTimestamp = packet->header.sendTimestamp;
+    if (fromFec) {
+        // The window took the body unless it ignored the message.
+        IHS_SessionPacketClear(&assembled, true);
+    }
 }
 
 static void CountVideoPacket(IHS_SessionChannelData *channel, uint16_t packetId) {
@@ -115,6 +137,16 @@ static void CountVideoPacket(IHS_SessionChannelData *channel, uint16_t packetId)
     IHS_SessionCounterSet(counters->videoPackets, channel->seqReceived);
     IHS_SessionCounterSet(counters->videoPacketsLost,
                           expected > channel->seqReceived ? expected - channel->seqReceived : 0);
+}
+
+static void CountFEC(IHS_SessionChannelData *channel) {
+    IHS_SessionCounters *counters = &channel->base.session->counters;
+    IHS_SessionFECStats stats;
+    IHS_SessionFECGetStats(channel->fec, &stats);
+    IHS_SessionCounterSet(counters->fecShards, stats.shards);
+    IHS_SessionCounterSet(counters->fecShardsLost, stats.shardsLost);
+    IHS_SessionCounterSet(counters->fecRecovered, stats.recovered);
+    IHS_SessionCounterSet(counters->fecUnrecoverable, stats.unrecoverable);
 }
 
 void IHS_SessionChannelDataLost(IHS_SessionChannel *channel) {

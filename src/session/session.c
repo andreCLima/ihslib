@@ -201,6 +201,12 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->videoPacketsLost = IHS_SessionCounterGet(session->counters.videoPacketsLost);
     stats->lostReports = IHS_SessionCounterGet(session->counters.lostReports);
     stats->roundTripMs = (float) IHS_SessionCounterGet(session->counters.roundTrip) * 1000.0f / 65536.0f;
+    uint32_t fecShards = IHS_SessionCounterGet(session->counters.fecShards);
+    stats->fec = fecShards > 0;
+    stats->videoPackets += fecShards;
+    stats->videoPacketsLost += IHS_SessionCounterGet(session->counters.fecShardsLost);
+    stats->fecRecovered = IHS_SessionCounterGet(session->counters.fecRecovered);
+    stats->fecUnrecoverable = IHS_SessionCounterGet(session->counters.fecUnrecoverable);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {

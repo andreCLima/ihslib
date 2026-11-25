@@ -164,6 +164,15 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
 
     clientConfig.controller_overlay_hotkey = "auto";
 
+    // enable_unreliable_fec (25) is newer than ihslib's copy of the protocol. protobuf-c packs
+    // unknown fields as they are, so it goes out that way.
+    uint8_t fecOn = 1;
+    ProtobufCMessageUnknownField fecField = {25, PROTOBUF_C_WIRE_TYPE_VARINT, 1, &fecOn};
+    if (ihsConf.enableFec) {
+        clientConfig.base.n_unknown_fields = 1;
+        clientConfig.base.unknown_fields = &fecField;
+    }
+
     CStreamingClientCaps clientCaps = CSTREAMING_CLIENT_CAPS__INIT;
 
     clientCaps.system_info = "\"SystemInfo\"\n{\n\t\"OSType\"\t\t\"-197\"\n\t\"CPUID\"\t\t\"ARM\"\n"

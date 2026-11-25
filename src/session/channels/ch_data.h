@@ -29,6 +29,7 @@
 #include "protobuf/remoteplay.pb-c.h"
 #include "session/frame.h"
 #include "session/window.h"
+#include "session/fec.h"
 #include "ihs_thread.h"
 
 typedef struct IHS_SessionDataFrameHeader {
@@ -41,6 +42,8 @@ typedef struct IHS_SessionDataFrameHeader {
 typedef struct IHS_SessionChannelData {
     IHS_SessionChannel base;
     IHS_SessionPacketsWindow *window;
+    /* Reassembles UnreliableFEC shards; used on the receive thread only. */
+    IHS_SessionFEC *fec;
     IHS_Mutex *windowLock;
     IHS_Cond *windowCond;
 

@@ -43,6 +43,8 @@ typedef struct IHS_SessionInfo {
 typedef struct IHS_SessionConfig {
     bool enableAudio;
     bool enableHevc;
+    /** Ask the host for forward error correction on video, so a lost packet can be rebuilt. */
+    bool enableFec;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {
@@ -210,6 +212,12 @@ typedef struct IHS_SessionStreamStats {
     uint32_t lostReports;
     /** Smoothed round trip of reliable packets in milliseconds; 0 until measured. */
     float roundTripMs;
+    /** The host sends video with forward error correction. Packets above count its shards. */
+    bool fec;
+    /** Video messages rebuilt from FEC parity. */
+    uint32_t fecRecovered;
+    /** Video messages lost despite FEC (more shards missing than the parity covers). */
+    uint32_t fecUnrecoverable;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

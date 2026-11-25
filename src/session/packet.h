@@ -49,6 +49,8 @@ typedef enum IHS_SessionPacketType {
     IHS_SessionPacketTypeNACK = 8,
     IHS_SessionPacketTypeDisconnect = 9,
     IHS_SessionPacketTypeUnreliableNack = 10,
+    /** A shard of an unreliable message sent with forward error correction (session/fec.h). */
+    IHS_SessionPacketTypeUnreliableFEC = 11,
     IHS_SessionPacketTypeMax,
 } IHS_SessionPacketType;
 
