@@ -116,17 +116,19 @@ bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_Ses
     if (match == NULL) {
         return false;
     }
-    if (retransmitCount == 1) {
+    int32_t sample = (int32_t) (IHS_SessionPacketTimestamp() - sendTimestamp);
+    if (retransmitCount == 1 && sample >= 0) {
         // Sent once (the queued copy counts 1), so the ACK can only be for that send. Smoothed
-        // like TCP's SRTT, by 1/8 per sample.
+        // like TCP's SRTT, by 1/8 per sample. A negative sample is skipped: as a uint32_t, one of
+        // about -4 ms read as 65535996 ms on a Q74T, and the smoothing took about a hundred more to undo it.
         IHS_Session *session = retransmission->session;
-        uint32_t sample = IHS_SessionPacketTimestamp() - sendTimestamp;
         if (sample == 0) {
             sample = 1;  // 0 means not measured
         }
         uint32_t rtt = IHS_SessionCounterGet(session->counters.roundTrip);
         IHS_SessionCounterSet(session->counters.roundTrip,
-                              rtt == 0 ? sample : (uint32_t) ((int64_t) rtt + ((int64_t) sample - rtt) / 8));
+                              rtt == 0 ? (uint32_t) sample
+                                       : (uint32_t) ((int64_t) rtt + ((int64_t) sample - rtt) / 8));
     }
     IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
                    "Cancelling Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
