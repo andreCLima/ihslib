@@ -156,8 +156,11 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
     PROTOBUF_C_SET_VALUE(clientConfig, enable_video_streaming, true);
     PROTOBUF_C_SET_VALUE(clientConfig, maximum_framerate_numerator, 5994);
     PROTOBUF_C_SET_VALUE(clientConfig, maximum_framerate_denominator, 100);
-    PROTOBUF_C_SET_VALUE(clientConfig, quality, k_EStreamQualityBalanced);
-    PROTOBUF_C_SET_VALUE(clientConfig, maximum_bitrate_kbps, 30000);
+    // Field 6 is desired_bitrate_kbps in current Steam; ihslib's copy still calls it maximum.
+    int bitrateKbps = ihsConf.bitrateKbps != 0 ? ihsConf.bitrateKbps : 30000;
+    PROTOBUF_C_SET_VALUE(clientConfig, quality,
+                         ihsConf.quality != 0 ? (EStreamQualityPreference) ihsConf.quality : k_EStreamQualityBalanced);
+    PROTOBUF_C_SET_VALUE(clientConfig, maximum_bitrate_kbps, bitrateKbps);
     if (ihsConf.enableHevc) {
         PROTOBUF_C_SET_VALUE(clientConfig, enable_video_hevc, true);
     }
@@ -183,8 +186,9 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
                              "\t\"VideoDisplayX\"\t\"1920\"\n\t\"VideoDisplayY\"\t\"1080\"\n"
                              "\t\"VideoDisplayNameID\"\t\"JN-MD133BFHDR\"\n}\n";
     PROTOBUF_C_SET_VALUE(clientCaps, system_can_suspend, true);
-    PROTOBUF_C_SET_VALUE(clientCaps, maximum_decode_bitrate_kbps, 30000);
-    PROTOBUF_C_SET_VALUE(clientCaps, maximum_burst_bitrate_kbps, 90000);
+    // Steam keeps the stream under what the client says it can decode.
+    PROTOBUF_C_SET_VALUE(clientCaps, maximum_decode_bitrate_kbps, bitrateKbps > 30000 ? bitrateKbps : 30000);
+    PROTOBUF_C_SET_VALUE(clientCaps, maximum_burst_bitrate_kbps, bitrateKbps > 30000 ? bitrateKbps * 3 : 90000);
     if (ihsConf.enableHevc) {
         PROTOBUF_C_SET_VALUE(clientCaps, supports_video_hevc, true);
     }

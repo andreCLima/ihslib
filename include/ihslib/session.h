@@ -45,6 +45,13 @@ typedef struct IHS_SessionConfig {
     bool enableHevc;
     /** Ask the host for forward error correction on video, so a lost packet can be rebuilt. */
     bool enableFec;
+    /**
+     * Steam's quality preference (EStreamQualityPreference): -1 automatic, 1 fast, 2 balanced,
+     * 3 beautiful. 0 keeps balanced.
+     */
+    int quality;
+    /** Bitrate to ask for in kbit/s. 0 keeps 30000; -1 lets Steam decide. */
+    int bitrateKbps;
 } IHS_SessionConfig;
 
 typedef struct IHS_StreamSessionCallbacks {
