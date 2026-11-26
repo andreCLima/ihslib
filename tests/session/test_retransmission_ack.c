@@ -26,6 +26,7 @@ static uint32_t covered(IHS_Session *session) {
 }
 
 int main(void) {
+    IHS_Init();
     IHS_Session *session = IHS_TestSessionCreate();
     IHS_SessionRetransmission *r = &session->retransmission;
 
@@ -90,5 +91,6 @@ int main(void) {
     assert(stats.controlAckMaxMs == 0);
 
     IHS_SessionDestroy(session);
+    IHS_Quit();
     return 0;
 }
