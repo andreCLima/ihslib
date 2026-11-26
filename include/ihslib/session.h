@@ -258,7 +258,8 @@ typedef struct IHS_SessionStreamStats {
     uint32_t retransmissions;
     /** Reliable packets given up on after the last attempt (about 12 s). */
     uint32_t retransmitGaveUp;
-    /** Longest a reliable packet waited after its first send, acknowledged or given up, in ms (from the back-off schedule). */
+    /** Longest a reliable packet waited after its first send, acknowledged or given up, in ms (from the back-off schedule),
+     *  since the previous call (each call clears it). */
     uint32_t retransmitMaxDelayMs;
     /** Times Steam asked for a full controller report (a delta was lost or its CRC did not match). */
     uint32_t hidFullReportRequests;

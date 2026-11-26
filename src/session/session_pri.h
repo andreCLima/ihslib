@@ -89,10 +89,10 @@ typedef struct IHS_SessionCounters {
     uint32_t fecRecovered;
     uint32_t fecUnrecoverable;
     /* Reliable packets sent again, packets given up on, and the longest an acknowledged packet
-     * took after its first send (ms, estimated from the back-off schedule). */
+     * took after its first send (ms, estimated from the back-off schedule; interval). */
     uint32_t retransmissions;
     uint32_t retransmitGaveUp;
-    uint32_t retransmitMaxDelayMs;
+    uint32_t retransmitMaxDelayMs;    /* interval */
     /* HID: full reports Steam asked for, full reports we sent on our own, requests that kept the
      * worker busy for more than 50 ms. */
     uint32_t hidFullReportRequests;
@@ -133,6 +133,8 @@ typedef struct IHS_SessionCounters {
     uint32_t hidJobWaitMaxMs;
     uint32_t hidJobRunMaxMs;
     uint32_t hidCommandCounts[16];
+    /* Last target bitrate Steam set (receive thread only): the log line comes only when it changes. */
+    int32_t lastTargetBitrateKbps;
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)

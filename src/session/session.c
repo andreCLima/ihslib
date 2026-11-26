@@ -223,7 +223,8 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->timedOut = IHS_SessionCounterGet(session->timedOut);
     stats->retransmissions = IHS_SessionCounterGet(session->counters.retransmissions);
     stats->retransmitGaveUp = IHS_SessionCounterGet(session->counters.retransmitGaveUp);
-    stats->retransmitMaxDelayMs = IHS_SessionCounterGet(session->counters.retransmitMaxDelayMs);
+    /* Per interval: a single slow packet early in the session used to show for the rest of it. */
+    stats->retransmitMaxDelayMs = __atomic_exchange_n(&session->counters.retransmitMaxDelayMs, 0, __ATOMIC_RELAXED);
     stats->hidFullReportRequests = IHS_SessionCounterGet(session->counters.hidFullReportRequests);
     stats->hidResyncReports = IHS_SessionCounterGet(session->counters.hidResyncReports);
     stats->hidSlowJobs = IHS_SessionCounterGet(session->counters.hidSlowJobs);

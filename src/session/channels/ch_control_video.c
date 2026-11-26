@@ -122,7 +122,12 @@ void IHS_SessionChannelControlOnVideo(IHS_SessionChannel *channel, EStreamContro
                 IHS_SessionLog(session, IHS_LogLevelWarn, "Video", "Malformed CSetTargetBitrateMsg");
                 break;
             }
-            IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Video", "Host target bitrate: %d kbps", message->bitrate);
+            /* Steam may send this again with the same value; log only changes. */
+            if (message->bitrate != session->counters.lastTargetBitrateKbps) {
+                IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Video", "Host target bitrate: %d kbps (was %d)",
+                                      message->bitrate, session->counters.lastTargetBitrateKbps);
+                session->counters.lastTargetBitrateKbps = message->bitrate;
+            }
             const IHS_StreamVideoCallbacks *callbacks = session->callbacks.video;
             if (callbacks && callbacks->setTargetBitrate) {
                 callbacks->setTargetBitrate(session, message->bitrate, session->callbackContexts.video);
