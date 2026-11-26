@@ -76,7 +76,7 @@ jobs:
           - sanitizer: TSan
             cmake_flags: -DIHSLIB_SANITIZE_THREAD=ON
             env: |
-              TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/tests/tsan.supp
+              TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=@WORKSPACE@/tests/tsan.supp
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,8 +107,10 @@ jobs:
         working-directory: ${{github.workspace}}/build
         # Convert the multiline env into VAR=val exports, then run ctest.
         # Each test failure surfaces a sanitizer trace via --output-on-failure.
+        # github.workspace expands empty inside matrix.include, so the env names the checkout as
+        # @WORKSPACE@; ctest runs each test from its own directory, so the path must be absolute.
         run: |
           while IFS= read -r line; do
-            [[ -n "$line" ]] && export "$line"
+            [[ -n "$line" ]] && export "${line//@WORKSPACE@/$GITHUB_WORKSPACE}"
           done <<< '${{ matrix.env }}'
           ctest --output-on-failure
