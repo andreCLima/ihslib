@@ -249,6 +249,15 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->hidReportsSent = IHS_SessionCounterGet(counters->hidReportsSent);
     stats->hidUseLockMaxWaitMs = __atomic_exchange_n(&counters->hidUseLockMaxWaitMs, 0, __ATOMIC_RELAXED);
     stats->hidInputStalls = IHS_SessionCounterGet(counters->hidInputStalls);
+    stats->ctrlRxPackets = IHS_SessionCounterGet(counters->ctrlRxPackets);
+    stats->ctrlRxResent = IHS_SessionCounterGet(counters->ctrlRxResent);
+    stats->ctrlRxDuplicate = IHS_SessionCounterGet(counters->ctrlRxDuplicate);
+    stats->ctrlAckHoles = IHS_SessionCounterGet(counters->ctrlAckHoles);
+    stats->ctrlHoleMaxMs = __atomic_exchange_n(&counters->ctrlHoleMaxMs, 0, __ATOMIC_RELAXED);
+    stats->ctrlRxMessages = IHS_SessionCounterGet(counters->ctrlRxMessages);
+    stats->hidJobs = IHS_SessionCounterGet(counters->hidJobs);
+    stats->hidJobWaitMaxMs = __atomic_exchange_n(&counters->hidJobWaitMaxMs, 0, __ATOMIC_RELAXED);
+    stats->hidJobRunMaxMs = __atomic_exchange_n(&counters->hidJobRunMaxMs, 0, __ATOMIC_RELAXED);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {

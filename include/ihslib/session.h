@@ -302,6 +302,21 @@ typedef struct IHS_SessionStreamStats {
     uint32_t hidUseLockMaxWaitMs;
     /** Times controller input waited over 200 ms to be sent. */
     uint32_t hidInputStalls;
+    /** Reliable control packets from the host: all, those it marked as resent, those we already had. */
+    uint32_t ctrlRxPackets;
+    uint32_t ctrlRxResent;
+    uint32_t ctrlRxDuplicate;
+    /** ACKs we sent short of the newest id received, because an earlier packet was missing. */
+    uint32_t ctrlAckHoles;
+    /** Interval: longest a missing host control packet held back the later ones, in ms. */
+    uint32_t ctrlHoleMaxMs;
+    /** Control messages from the host delivered in order. */
+    uint32_t ctrlRxMessages;
+    /** Controller requests from the host run on the HID worker. */
+    uint32_t hidJobs;
+    /** Interval: longest such request waited in the worker's queue, and longest one ran, in ms. */
+    uint32_t hidJobWaitMaxMs;
+    uint32_t hidJobRunMaxMs;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

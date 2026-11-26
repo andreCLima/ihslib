@@ -117,6 +117,22 @@ typedef struct IHS_SessionCounters {
     uint32_t hidReportsSent;
     uint32_t hidUseLockMaxWaitMs;     /* interval */
     uint32_t hidInputStalls;
+    /* Steam to us on the control channel: reliable packets, the ones Steam marked as resent, the
+     * ones we already had, ACKs that had to stop short of the newest id (a gap), the longest such
+     * gap (interval), and the messages they carried. */
+    uint32_t ctrlRxPackets;
+    uint32_t ctrlRxResent;
+    uint32_t ctrlRxDuplicate;
+    uint32_t ctrlAckHoles;
+    uint32_t ctrlHoleMaxMs;           /* interval */
+    uint32_t ctrlRxMessages;
+    /* HID requests from Steam, run on the worker: how many, the longest one waited in the queue
+     * and the longest one ran (both interval), and how many of each command (by command_case,
+     * taken by the control channel's summary line). */
+    uint32_t hidJobs;
+    uint32_t hidJobWaitMaxMs;
+    uint32_t hidJobRunMaxMs;
+    uint32_t hidCommandCounts[16];
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)

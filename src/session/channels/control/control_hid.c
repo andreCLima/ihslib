@@ -86,9 +86,14 @@ static void DispatchHIDMsg(IHS_SessionChannel *channel, const CHIDMessageToRemot
  * they need not come in order with other traffic.
  */
 typedef struct HIDMessageJob {
+    /* IHS_TimerNow() when it was queued: how long it waited behind the jobs before it goes in the log. */
+    uint64_t queuedMs;
     size_t len;
     uint8_t data[];
 } HIDMessageJob;
+
+/* A request that waited this long behind earlier ones is worth a line: Steam blocks on some of them. */
+#define HID_LATE_REQUEST_MS 200
 
 static void RunHIDMessage(IHS_HIDManager *manager, void *context);
 
@@ -120,6 +125,7 @@ void IHS_SessionChannelControlOnHIDMsg(IHS_SessionChannel *channel, const CHIDMe
         RejectHIDRequest(channel, message);
         return;
     }
+    job->queuedMs = IHS_TimerNow();
     job->len = len;
     chidmessage_to_remote__pack(message, job->data);
     if (!IHS_HIDManagerDefer(manager, RunHIDMessage, job)) {
@@ -172,8 +178,19 @@ static void RunHIDMessage(IHS_HIDManager *manager, void *context) {
         held = IHS_HIDManagerAcquireDeviceByID(manager, deviceId);
     }
     uint64_t started = IHS_TimerNow();
+    IHS_SessionCounters *counters = &manager->session->counters;
+    uint64_t waitedMs = started - job->queuedMs;
+    IHS_SessionCounterAdd(counters->hidJobs, 1);
+    IHS_SessionCounterAdd(counters->hidCommandCounts[(unsigned) message->command_case & 15u], 1);
+    IHS_SessionCounterMax(&counters->hidJobWaitMaxMs, waitedMs > UINT32_MAX ? UINT32_MAX : (uint32_t) waitedMs);
+    if (waitedMs > HID_LATE_REQUEST_MS) {
+        IHS_SessionLogLimited(manager->session, IHS_LogLevelWarn, "HID",
+                              "HID request %u (command %d) waited %u ms on the worker behind earlier ones",
+                              message->request_id, (int) message->command_case, (unsigned) waitedMs);
+    }
     DispatchHIDMsg(channel, message);
     uint64_t tookMs = IHS_TimerNow() - started;
+    IHS_SessionCounterMax(&counters->hidJobRunMaxMs, tookMs > UINT32_MAX ? UINT32_MAX : (uint32_t) tookMs);
     if (tookMs > HID_SLOW_REQUEST_MS) {
         // Everything behind it on the worker waited too: rumble and LED requests, reads, closes.
         IHS_SessionCounterAdd(manager->session->counters.hidSlowJobs, 1);

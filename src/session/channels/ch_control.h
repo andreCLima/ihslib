@@ -47,6 +47,22 @@ typedef struct IHS_SessionChannelControl {
      * threads.
      */
     IHS_Mutex *sendLock;
+    /**
+     * What Steam sends us, for the log (receive thread only). The newest reliable id seen; when
+     * the ACK had to stop short of it, the time the gap opened and what Steam resent meanwhile;
+     * and the counts of the current summary interval, by message type.
+     */
+    struct {
+        bool seen;
+        uint16_t newestId;
+        uint64_t gapSinceMs;
+        uint16_t gapAckId;
+        uint32_t gapResent;
+        bool gapWarned;
+        uint64_t summarySinceMs;
+        uint32_t packets, resent, duplicate, holeAcks, messages;
+        uint32_t typeCounts[256];
+    } rx;
 } IHS_SessionChannelControl;
 
 IHS_SessionChannel *IHS_SessionChannelControlCreate(IHS_Session *session);

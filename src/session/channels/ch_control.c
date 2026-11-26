@@ -25,6 +25,7 @@
 
 #include "ch_control.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,6 +61,11 @@ static void OnSetSpectatorMode(IHS_SessionChannel *channel, const CSetSpectatorM
 static void OnSetQoS(IHS_SessionChannel *channel, const CSetQoSMsg *message);
 
 static const char *ControlMessageTypeName(EStreamControlMessage type);
+
+static void ControlRxTrack(IHS_SessionChannelControl *control, uint16_t packetId, uint16_t ackId, bool resent,
+                           bool duplicate);
+
+static void ControlRxSummary(IHS_SessionChannelControl *control);
 
 static const IHS_SessionChannelClass ChannelClass = {
         .init = OnControlInit,
@@ -158,6 +164,11 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
         case IHS_SessionPacketTypeReliable:
         case IHS_SessionPacketTypeReliableFrag: {
             uint16_t ackId = packet->header.packetId;
+            const uint16_t packetId = packet->header.packetId;
+            const bool resent = packet->header.retransmitCount > 0;
+            uint16_t had;
+            const bool duplicate = control->rx.seen && IHS_SessionPacketsWindowContiguousId(window, &had) &&
+                                   (int16_t) (uint16_t) (packetId - had) <= 0;
             if (!IHS_SessionPacketsWindowAdd(window, packet)) {
                 IHS_SessionLog(channel->session, IHS_LogLevelError, "Control", "Frames window overflow");
                 IHS_SessionDisconnect(channel->session);
@@ -166,6 +177,7 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
             // id told it that a lost one had arrived, so it was never sent again and the window
             // waited for it until it overflowed. ACK the last packet up to which none is missing.
             IHS_SessionPacketsWindowContiguousId(window, &ackId);
+            ControlRxTrack(control, packetId, ackId, resent, duplicate);
             IHS_SessionChannelPacketAck(channel, ackId, true);
             break;
         }
@@ -186,6 +198,9 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
     for (; IHS_SessionPacketsWindowPoll(window, &frame); IHS_SessionPacketsWindowReleaseFrame(&frame)) {
         EStreamControlMessage type = *IHS_BufferPointer(&frame.body);
         IHS_BufferOffsetBy(&frame.body, 1);
+        control->rx.messages++;
+        control->rx.typeCounts[(uint8_t) type]++;
+        IHS_SessionCounterAdd(channel->session->counters.ctrlRxMessages, 1);
         if (IsMessageEncrypted(type)) {
             IHS_Buffer plain;
             IHS_BufferInit(&plain, 1024, 1024 * 1024);
@@ -223,6 +238,151 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
     }
 
     IHS_BufferClear(&frame.body, true);
+    ControlRxSummary(control);
+}
+
+/*
+ * Steam to us. The controller can freeze while our reports reach Steam and are acknowledged
+ * within milliseconds, so the other direction is the suspect: Steam's HID requests (it waits on
+ * some of them) come in order on this channel, behind any packet that went missing. A log of
+ * 26/11 also showed us sending 500 to 1500 control packets a second during the freezes, against
+ * some 20 new ids a second from Steam: ACKs for packets Steam kept sending again. These counters
+ * say how often Steam resends, whether we had the packet already, and how long a gap held the
+ * rest back.
+ */
+static void ControlRxTrack(IHS_SessionChannelControl *control, uint16_t packetId, uint16_t ackId, bool resent,
+                           bool duplicate) {
+    IHS_Session *session = control->base.session;
+    IHS_SessionCounters *counters = &session->counters;
+    uint64_t now = IHS_TimerNow();
+    control->rx.packets++;
+    IHS_SessionCounterAdd(counters->ctrlRxPackets, 1);
+    if (resent) {
+        control->rx.resent++;
+        IHS_SessionCounterAdd(counters->ctrlRxResent, 1);
+    }
+    if (duplicate) {
+        control->rx.duplicate++;
+        IHS_SessionCounterAdd(counters->ctrlRxDuplicate, 1);
+    }
+    if (!control->rx.seen || (int16_t) (uint16_t) (packetId - control->rx.newestId) > 0) {
+        control->rx.newestId = packetId;
+        control->rx.seen = true;
+    }
+    int16_t behind = (int16_t) (uint16_t) (control->rx.newestId - ackId);
+    if (behind > 0) {
+        control->rx.holeAcks++;
+        IHS_SessionCounterAdd(counters->ctrlAckHoles, 1);
+        if (control->rx.gapSinceMs == 0) {
+            control->rx.gapSinceMs = now;
+            control->rx.gapAckId = ackId;
+            control->rx.gapResent = 0;
+            control->rx.gapWarned = false;
+        } else if (resent) {
+            control->rx.gapResent++;
+        }
+        uint32_t age = (uint32_t) (now - control->rx.gapSinceMs);
+        IHS_SessionCounterMax(&counters->ctrlHoleMaxMs, age);
+        if (age >= 1000 && !control->rx.gapWarned) {
+            control->rx.gapWarned = true;
+            IHS_SessionLogLimited(session, IHS_LogLevelWarn, "Control",
+                                  "Steam control packet %u missing for %u ms: %d later packets wait behind it, "
+                                  "%u resent by Steam meanwhile", (unsigned) (uint16_t) (ackId + 1), age,
+                                  (int) behind, control->rx.gapResent);
+        }
+    } else if (control->rx.gapSinceMs != 0) {
+        uint32_t age = (uint32_t) (now - control->rx.gapSinceMs);
+        IHS_SessionCounterMax(&counters->ctrlHoleMaxMs, age);
+        if (age >= 100) {
+            IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Control",
+                                  "Gap after Steam control packet %u closed after %u ms (%u resent by Steam meanwhile)",
+                                  (unsigned) control->rx.gapAckId, age, control->rx.gapResent);
+        }
+        control->rx.gapSinceMs = 0;
+    }
+}
+
+static const char *HIDCommandName(unsigned command) {
+    switch (command) {
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_OPEN: return "open";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_CLOSE: return "close";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_WRITE: return "write";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_READ: return "read";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_SEND_FEATURE_REPORT: return "setFeature";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_FEATURE_REPORT: return "getFeature";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_VENDOR_STRING: return "vendor";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_PRODUCT_STRING: return "product";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_GET_SERIAL_NUMBER_STRING: return "serial";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_START_INPUT_REPORTS: return "startReports";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_REQUEST_FULL_REPORT: return "fullReport";
+        case CHIDMESSAGE_TO_REMOTE__COMMAND_DEVICE_DISCONNECT: return "disconnect";
+        default: return "other";
+    }
+}
+
+/* One Debug line every 5 s (or at the next packet after): what Steam sent, by message type, and
+ * the HID requests the worker ran. Receive thread only. */
+static void ControlRxSummary(IHS_SessionChannelControl *control) {
+    uint64_t now = IHS_TimerNow();
+    if (control->rx.summarySinceMs == 0) {
+        control->rx.summarySinceMs = now;
+        return;
+    }
+    uint64_t span = now - control->rx.summarySinceMs;
+    if (span < 5000) {
+        return;
+    }
+    char types[192] = "";
+    size_t typesLen = 0;
+    bool picked[256] = {false};
+    for (int n = 0; n < 4; n++) {
+        int best = -1;
+        for (int i = 0; i < 256; i++) {
+            if (!picked[i] && control->rx.typeCounts[i] > 0 &&
+                (best < 0 || control->rx.typeCounts[i] > control->rx.typeCounts[best])) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        picked[best] = true;
+        const char *name = ControlMessageTypeName((EStreamControlMessage) best);
+        if (strncmp(name, "k_EStreamControl", 16) == 0) {
+            name += 16;
+        }
+        int written = snprintf(types + typesLen, sizeof(types) - typesLen, "%s%s(%d) x%u", n > 0 ? ", " : "",
+                               name, best, control->rx.typeCounts[best]);
+        if (written < 0 || (size_t) written >= sizeof(types) - typesLen) {
+            break;
+        }
+        typesLen += (size_t) written;
+    }
+    char hid[192] = "";
+    size_t hidLen = 0;
+    uint32_t *commands = control->base.session->counters.hidCommandCounts;
+    for (unsigned i = 0; i < 16; i++) {
+        uint32_t count = __atomic_exchange_n(&commands[i], 0, __ATOMIC_RELAXED);
+        if (count == 0) {
+            continue;
+        }
+        int written = snprintf(hid + hidLen, sizeof(hid) - hidLen, "%s%s=%u", hidLen > 0 ? " " : "",
+                               HIDCommandName(i), count);
+        if (written < 0 || (size_t) written >= sizeof(hid) - hidLen) {
+            break;
+        }
+        hidLen += (size_t) written;
+    }
+    IHS_SessionLog(control->base.session, IHS_LogLevelDebug, "Control",
+                   "From Steam in %u ms: %u reliable packets (%u resent by Steam, %u we already had, "
+                   "%u ACKs short of the newest), %u messages: %s | HID jobs: %s",
+                   (unsigned) span, control->rx.packets, control->rx.resent, control->rx.duplicate,
+                   control->rx.holeAcks, control->rx.messages, typesLen > 0 ? types : "none",
+                   hidLen > 0 ? hid : "none");
+    control->rx.packets = control->rx.resent = control->rx.duplicate = 0;
+    control->rx.holeAcks = control->rx.messages = 0;
+    memset(control->rx.typeCounts, 0, sizeof(control->rx.typeCounts));
+    control->rx.summarySinceMs = now;
 }
 
 void IHS_SessionChannelControlOnMessageReceived(IHS_SessionChannel *channel, EStreamControlMessage type,
