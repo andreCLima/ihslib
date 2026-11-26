@@ -95,8 +95,9 @@ int main(void) {
     expect_slot(agg, SLOT_DECODE, 2, 10.0f);
     /* Display/upload: 5 ms each (20→25 and 40→45). avg ≈ 5 ms. */
     expect_slot(agg, SLOT_DISPLAY, 2, 5.0f);
-    /* Network: event 12→13 — same timestamp seeded, delta = 0 ms. avg ≈ 0. */
-    expect_slot(agg, SLOT_NETWORK, 2, 0.0f);
+    /* Network (stat 6) is no longer reported (patch 0029): events 12 and 13 come from the host's and
+     * the client's clocks, so their difference is meaningless. The slot stays empty. */
+    expect_slot(agg, SLOT_NETWORK, 0, 0.0f);
     /* Client end-to-end: 13→18 — 30 ms each (0→30 and 20→50). avg ≈ 30 ms. */
     expect_slot(agg, SLOT_CLIENT, 2, 30.0f);
     /* Frame duration: only one inter-frame interval (frame 1's 18 → frame 2's 18 = 20 ms).
@@ -145,6 +146,19 @@ int main(void) {
     folded = IHS_FrameStatsAggregatorDrain(agg, &latest);
     assert(folded == 2);                  /* frames 5 and 6 */
     assert(latest == 6);
+
+    /* Network samples (stats 14 to 18): the first call only seeds the baseline. The second, 1 s
+     * later with 125000 more bytes, is 1000 kbit/s, and a round trip of 65536 is 1000 ms. */
+    IHS_FrameStatsAccumulatorReset(&agg->accumulator);
+    IHS_FrameStatsAddNetworkSample(agg, 1000, 65536, 0, 0, 0);
+    expect_slot(agg, 17, 0, 0.0f);
+    IHS_FrameStatsAddNetworkSample(agg, 2000, 65536, 125000, 198, 2);
+    expect_slot(agg, 14, 1, 1000.0f);
+    expect_slot(agg, 15, 1, 1000.0f);
+    expect_slot(agg, 16, 1, 1000.0f);
+    expect_slot(agg, 17, 1, 1000.0f);
+    /* 2 lost of 200 */
+    expect_slot(agg, 18, 1, 1.0f);
 
     IHS_FrameStatsAggregatorDestroy(agg);
     return 0;
