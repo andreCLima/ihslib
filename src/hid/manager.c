@@ -280,6 +280,7 @@ static uint64_t HIDPollTick(int runCount, void *context) {
             bool started = managed->reportHolder.reportLength >= 48;
             IHS_MutexUnlock(managed->lock);
             if (started && IHS_HIDDeviceRequestFullReport(managed->device) == 0) {
+                IHS_SessionCounterAdd(manager->session->counters.hidResyncReports, 1);
                 anyData = true;
             }
         }

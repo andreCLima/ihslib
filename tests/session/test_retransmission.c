@@ -7,6 +7,7 @@
 #include <assert.h>
 
 #include "session/retransmission.h"
+#include "session/session_pri.h"
 
 static void test_interval_backs_off_and_caps(void) {
     // The queued copy of a packet sent once has retransmitCount 1.
@@ -53,9 +54,26 @@ static void test_exhausted_packet_is_not_queued(void) {
     IHS_SessionPacketClear(&packet, true);
 }
 
+static void test_log_limit_is_one_line_per_second(void) {
+    IHS_LogLimit limit = {0};
+    uint32_t count = 0;
+    // The first occurrence logs at once, and stands for itself.
+    assert(IHS_LogLimitAllow(&limit, &count));
+    assert(count == 1);
+    // A burst right after it is held back (the loop is far shorter than a second).
+    for (int i = 0; i < 100; i++) {
+        assert(!IHS_LogLimitAllow(&limit, &count));
+    }
+    // A second later the next one logs and reports the 100 held back plus itself.
+    limit.lastMs -= 1001;
+    assert(IHS_LogLimitAllow(&limit, &count));
+    assert(count == 101);
+}
+
 int main(void) {
     test_interval_backs_off_and_caps();
     test_budget_outlasts_a_wifi_stall();
     test_exhausted_packet_is_not_queued();
+    test_log_limit_is_one_line_per_second();
     return 0;
 }

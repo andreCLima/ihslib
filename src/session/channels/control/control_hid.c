@@ -92,6 +92,8 @@ typedef struct HIDMessageJob {
 
 static void RunHIDMessage(IHS_HIDManager *manager, void *context);
 
+#define HID_SLOW_REQUEST_MS 50
+
 /* Requests Steam waits on: it blocks until a response with this request_id arrives. */
 static void RejectHIDRequest(IHS_SessionChannel *channel, const CHIDMessageToRemote *message) {
     switch (message->command_case) {
@@ -169,7 +171,16 @@ static void RunHIDMessage(IHS_HIDManager *manager, void *context) {
     if (HIDMessageDeviceId(message, &deviceId)) {
         held = IHS_HIDManagerAcquireDeviceByID(manager, deviceId);
     }
+    uint64_t started = IHS_TimerNow();
     DispatchHIDMsg(channel, message);
+    uint64_t tookMs = IHS_TimerNow() - started;
+    if (tookMs > HID_SLOW_REQUEST_MS) {
+        // Everything behind it on the worker waited too: rumble and LED requests, reads, closes.
+        IHS_SessionCounterAdd(manager->session->counters.hidSlowJobs, 1);
+        IHS_SessionLogLimited(manager->session, IHS_LogLevelWarn, "HID",
+                       "HID request %u (command %d) took %u ms on the worker", message->request_id,
+                       (int) message->command_case, (unsigned) tookMs);
+    }
     if (held != NULL) {
         IHS_HIDManagerReleaseDevice(held);
     }
@@ -478,7 +489,8 @@ static void HandleDeviceSendFeatureReport(IHS_SessionChannel *channel, IHS_HIDMa
         if (attempt + 1 < attempts) usleep(2000);
     }
     if (ret < 0) {
-        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "HID",
+        IHS_SessionLogLimited(channel->session,
+                               managed->device->cls->sendFeatureReportOnce ? IHS_LogLevelDebug : IHS_LogLevelWarn, "HID",
                        "Message %u: SendFeatureReport(id=%u) failed after %d attempt(s): %d",
                        message->request_id, cmd->device, attempts, ret);
     }
@@ -635,6 +647,12 @@ static void HandleDeviceRequestFullReport(IHS_SessionChannel *channel, IHS_HIDMa
         return;
     }
 
+    // Steam asks when the CRC of a delta did not match its copy of the pad: a delta was lost or
+    // arrived out of order. Counted for the app's stats; the line is limited to one per second.
+    IHS_SessionCounterAdd(channel->session->counters.hidFullReportRequests, 1);
+    IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "HID",
+                          "Steam requested a full report for device %u (a delta was lost or its CRC did not match)",
+                          cmd->device);
     if (IHS_HIDDeviceRequestFullReport(managed->device) == 0) {
         // Here we assume this device has generated one full report, and send it right away.
         // This design may require change later...

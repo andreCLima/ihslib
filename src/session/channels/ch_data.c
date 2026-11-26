@@ -106,7 +106,7 @@ void IHS_SessionChannelDataReceived(IHS_SessionChannel *channel, IHS_SessionPack
     assert(type == IHS_SessionPacketTypeUnreliable || type == IHS_SessionPacketTypeUnreliableFrag);
     IHS_MutexLock(dataCh->windowLock);
     if (!IHS_SessionPacketsWindowAdd(dataCh->window, packet)) {
-        IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Data",
+        IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Data",
                        "%s channel: packet %u doesn't fit the window (%u free), starting over",
                        DataChannelName(channel->type), packet->header.packetId,
                        IHS_SessionPacketsWindowAvailable(dataCh->window));
@@ -148,6 +148,9 @@ static void CountFEC(IHS_SessionChannelData *channel) {
     IHS_SessionCounters *counters = &channel->base.session->counters;
     IHS_SessionFECStats stats;
     IHS_SessionFECGetStats(channel->fec, &stats);
+    if (stats.shards > 0 && IHS_SessionCounterGet(counters->fecShards) == 0) {
+        IHS_SessionLog(channel->base.session, IHS_LogLevelInfo, "Data", "Video: the host sends forward error correction");
+    }
     IHS_SessionCounterSet(counters->fecShards, stats.shards);
     IHS_SessionCounterSet(counters->fecShardsLost, stats.shardsLost);
     IHS_SessionCounterSet(counters->fecRecovered, stats.recovered);

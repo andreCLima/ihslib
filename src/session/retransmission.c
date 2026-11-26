@@ -42,6 +42,20 @@ uint64_t IHS_RetransmissionInterval(uint8_t retransmitCount) {
     return interval < IHS_RETRANSMISSION_INTERVAL_MAX ? interval : IHS_RETRANSMISSION_INTERVAL_MAX;
 }
 
+/* One warning per packet once it has been sent this many times (it has then waited ~150 ms): a
+ * Wi-Fi hiccup shows up here long before the packet is given up. */
+#define RETRANSMISSION_WARN_ATTEMPTS 5
+
+/* How long a packet sent `sends` times has been waiting since its first send, from the back-off
+ * schedule (the send timestamp in the header is that of the latest send only). */
+static uint64_t RetransmissionWaited(uint8_t sends) {
+    uint64_t total = 0;
+    for (uint8_t i = 1; i < sends; i++) {
+        total += IHS_RetransmissionInterval(i);
+    }
+    return total;
+}
+
 /*
  * A pending packet belongs to its timer task: the task's end callback takes it out of the queue
  * and frees it, on the timer thread. An ACK only marks it, under the lock, and the task then
@@ -95,6 +109,18 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
     pending->acked = false;
     pending->packet.header.retransmitCount++;
     IHS_BufferTransferOwnership(&packet->body, &pending->packet.body);
+    uint8_t sends = pending->packet.header.retransmitCount;
+    if (sends > 1) {
+        IHS_SessionCounterAdd(retransmission->session->counters.retransmissions, 1);
+    }
+    if (sends == RETRANSMISSION_WARN_ATTEMPTS) {
+        // Once per packet: only the send that reaches the count logs it.
+        IHS_SessionLogLimited(retransmission->session, IHS_LogLevelWarn, "Retransmission",
+                       "Reliable packet (channel %u, id %u, fragment %d) not acknowledged after %u sends, "
+                       "~%u ms; still resending",
+                       pending->packet.header.channelId, pending->packet.header.packetId,
+                       pending->packet.header.fragmentId, sends, (unsigned) RetransmissionWaited(sends));
+    }
     IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
                    "Queued Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
                    pending->packet.header.channelId, pending->packet.header.packetId,
@@ -143,6 +169,14 @@ bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_Ses
                               rtt == 0 ? (uint32_t) sample
                                        : (uint32_t) ((int64_t) rtt + ((int64_t) sample - rtt) / 8));
     }
+    if (retransmitCount >= RETRANSMISSION_WARN_ATTEMPTS) {
+        // Pairs with the warning above: the packet got through after all.
+        uint32_t waited = (uint32_t) RetransmissionWaited(retransmitCount);
+        IHS_SessionCounterMax(&retransmission->session->counters.retransmitMaxDelayMs, waited);
+        IHS_SessionLogLimited(retransmission->session, IHS_LogLevelInfo, "Retransmission",
+                       "Reliable packet (channel %u, id %u, fragment %d) acknowledged after %u sends, ~%u ms",
+                       channelId, packetId, (int) (int16_t) fragmentId, retransmitCount, waited);
+    }
     IHS_SessionLog(retransmission->session, IHS_LogLevelVerbose, "Retransmission",
                    "Cancelling Packet(channelId=%u, packetId=%u, fragmentId=%u), retransmitCount=%u",
                    channelId, packetId, fragmentId, retransmitCount);
@@ -168,6 +202,16 @@ static uint64_t RetransmissionTimerRun(int runCount, void *context) {
         IHS_SessionQueuePacket(retransmission->session, packet,
                                packet->header.retransmitCount < IHS_RETRANSMISSION_ATTEMPTS);
         assert(packet->body.data == NULL);
+        if (packet->header.retransmitCount >= IHS_RETRANSMISSION_ATTEMPTS) {
+            // That was the last send: nothing queues it again.
+            IHS_SessionCounterAdd(retransmission->session->counters.retransmitGaveUp, 1);
+            IHS_SessionLogLimited(retransmission->session, IHS_LogLevelError, "Retransmission",
+                           "Gave up on reliable packet (channel %u, id %u, fragment %d) after %u sends, ~%u ms; "
+                           "Steam delivers control messages in order, so later ones may be stuck behind it",
+                           packet->header.channelId, packet->header.packetId, packet->header.fragmentId,
+                           packet->header.retransmitCount,
+                           (unsigned) RetransmissionWaited(packet->header.retransmitCount));
+        }
     }
     return 0;
 }

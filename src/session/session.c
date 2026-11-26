@@ -216,6 +216,12 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->fecRecovered = IHS_SessionCounterGet(session->counters.fecRecovered);
     stats->fecUnrecoverable = IHS_SessionCounterGet(session->counters.fecUnrecoverable);
     stats->timedOut = IHS_SessionCounterGet(session->timedOut);
+    stats->retransmissions = IHS_SessionCounterGet(session->counters.retransmissions);
+    stats->retransmitGaveUp = IHS_SessionCounterGet(session->counters.retransmitGaveUp);
+    stats->retransmitMaxDelayMs = IHS_SessionCounterGet(session->counters.retransmitMaxDelayMs);
+    stats->hidFullReportRequests = IHS_SessionCounterGet(session->counters.hidFullReportRequests);
+    stats->hidResyncReports = IHS_SessionCounterGet(session->counters.hidResyncReports);
+    stats->hidSlowJobs = IHS_SessionCounterGet(session->counters.hidSlowJobs);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
@@ -354,4 +360,23 @@ static QueuedPacket *QueuedPacketCreate(IHS_Session *session, IHS_SessionPacket 
 static void QueuedPacketDestroy(QueuedPacket *queued, void *unused) {
     (void) unused;
     IHS_SessionPacketClear(&queued->packet, true);
+}
+bool IHS_LogLimitAllow(IHS_LogLimit *limit, uint32_t *suppressed) {
+    uint32_t count = __atomic_add_fetch(&limit->count, 1, __ATOMIC_RELAXED);
+    uint32_t now = (uint32_t) IHS_TimerNow();
+    uint32_t last = __atomic_load_n(&limit->lastMs, __ATOMIC_RELAXED);
+    // The first call (last == 0) and one a second after the previous line pass. Of racing threads,
+    // only the one that moves lastMs logs.
+    if (last != 0 && (int32_t) (now - last) < 1000) {
+        return false;
+    }
+    if (!__atomic_compare_exchange_n(&limit->lastMs, &last, now == 0 ? 1 : now, false, __ATOMIC_RELAXED,
+                                     __ATOMIC_RELAXED)) {
+        return false;
+    }
+    *suppressed = __atomic_exchange_n(&limit->count, 0, __ATOMIC_RELAXED);
+    if (*suppressed == 0) {
+        *suppressed = count;
+    }
+    return true;
 }

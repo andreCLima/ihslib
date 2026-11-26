@@ -254,6 +254,18 @@ typedef struct IHS_SessionStreamStats {
     uint32_t fecUnrecoverable;
     /** The session ended because the host went silent (no packets for 10 s), not by request. */
     bool timedOut;
+    /** Reliable (control) packets that had to be sent again. */
+    uint32_t retransmissions;
+    /** Reliable packets given up on after the last attempt (about 12 s). */
+    uint32_t retransmitGaveUp;
+    /** Longest an acknowledged reliable packet waited after its first send, in ms (an estimate). */
+    uint32_t retransmitMaxDelayMs;
+    /** Times Steam asked for a full controller report (a delta was lost or its CRC did not match). */
+    uint32_t hidFullReportRequests;
+    /** Full controller reports sent on our own, once a second per controller. */
+    uint32_t hidResyncReports;
+    /** Controller requests that took the HID worker more than 50 ms. */
+    uint32_t hidSlowJobs;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

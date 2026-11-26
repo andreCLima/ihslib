@@ -88,11 +88,28 @@ typedef struct IHS_SessionCounters {
     uint32_t fecShardsLost;
     uint32_t fecRecovered;
     uint32_t fecUnrecoverable;
+    /* Reliable packets sent again, packets given up on, and the longest an acknowledged packet
+     * took after its first send (ms, estimated from the back-off schedule). */
+    uint32_t retransmissions;
+    uint32_t retransmitGaveUp;
+    uint32_t retransmitMaxDelayMs;
+    /* HID: full reports Steam asked for, full reports we sent on our own, requests that kept the
+     * worker busy for more than 50 ms. */
+    uint32_t hidFullReportRequests;
+    uint32_t hidResyncReports;
+    uint32_t hidSlowJobs;
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)
 #define IHS_SessionCounterSet(field, v) __atomic_store_n(&(field), (v), __ATOMIC_RELAXED)
 #define IHS_SessionCounterGet(field) __atomic_load_n(&(field), __ATOMIC_RELAXED)
+
+/* Raise a counter to v if it is lower. */
+static inline void IHS_SessionCounterMax(uint32_t *field, uint32_t v) {
+    uint32_t cur = __atomic_load_n(field, __ATOMIC_RELAXED);
+    while (cur < v && !__atomic_compare_exchange_n(field, &cur, v, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+    }
+}
 
 struct IHS_Session {
     IHS_Base base;
@@ -162,3 +179,31 @@ bool IHS_SessionInputEnabled(IHS_Session *session);
 
 bool IHS_SessionCancelRetransmission(IHS_Session *session, IHS_SessionChannelId channelId, uint16_t packetId,
                                      uint16_t fragmentId);
+
+/*
+ * Logging for events that can repeat in a burst (a lossy Wi-Fi link): at most one line per second
+ * per call site, followed by how many more happened since the previous line. Call sites are shared
+ * by all sessions, which is fine for the app's one stream. Never for per-packet detail at Info.
+ */
+typedef struct IHS_LogLimit {
+    uint32_t lastMs;
+    uint32_t count;
+} IHS_LogLimit;
+
+/**
+ * @param suppressed Receives the number of occurrences this line stands for (>= 1)
+ * @return true if this occurrence should be logged
+ */
+bool IHS_LogLimitAllow(IHS_LogLimit *limit, uint32_t *suppressed);
+
+#define IHS_SessionLogLimited(session, level, tag, ...) \
+    do { \
+        static IHS_LogLimit ihsLimit_; \
+        uint32_t ihsCount_; \
+        if (IHS_LogLimitAllow(&ihsLimit_, &ihsCount_)) { \
+            IHS_SessionLog(session, level, tag, __VA_ARGS__); \
+            if (ihsCount_ > 1) { \
+                IHS_SessionLog(session, level, tag, "  ... %u occurrences since the last line", ihsCount_); \
+            } \
+        } \
+    } while (0)

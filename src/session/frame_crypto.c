@@ -82,12 +82,12 @@ IHS_SessionFrameDecryptResult IHS_SessionFrameDecrypt(IHS_Session *session, cons
     int hmacRet;
     if ((hmacRet = mbedtls_md_hmac(md, key, keyLen, IHS_BufferPointerAt(out, 0), out->size, hash)) != 0) {
         result = IHS_SessionFrameDecryptFailed;
-        IHS_SessionLog(session, IHS_LogLevelWarn, "Crypto", "HMAC failed: %x\n", -hmacRet);
+        IHS_SessionLogLimited(session, IHS_LogLevelWarn, "Crypto", "HMAC failed: %x\n", -hmacRet);
         goto exit;
     }
     if (memcmp(hash, IHS_BufferPointerAt(in, 0), 16) != 0) {
         result = IHS_SessionFrameDecryptHashMismatch;
-        IHS_SessionLog(session, IHS_LogLevelWarn, "Crypto", "HMAC mismatch\n");
+        IHS_SessionLogLimited(session, IHS_LogLevelWarn, "Crypto", "HMAC mismatch\n");
         goto exit;
     }
 

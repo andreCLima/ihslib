@@ -201,7 +201,7 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
                     break;
                 }
                 case IHS_SessionFrameDecryptSequenceMismatch: {
-                    IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Control",
+                    IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Control",
                                    "Mismatched message sequence %llu (expect %llu). id=%d, retransmit=%d, type=%s",
                                    actualSequence, expectSequence, frame.header.packetId, frame.header.retransmitCount,
                                    ControlMessageTypeName(type));
@@ -209,7 +209,7 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
                     break;
                 }
                 case IHS_SessionFrameDecryptFailed: {
-                    IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Control",
+                    IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Control",
                                    "Failed to decrypt control message. id=%d, retransmit=%d, type=%s",
                                    frame.header.packetId, frame.header.retransmitCount, ControlMessageTypeName(type));
                     break;

@@ -115,6 +115,11 @@ static void OnNegotiationInit(IHS_SessionChannel *channel, const CNegotiationIni
         }
     }
 
+    IHS_SessionLog(session, IHS_LogLevelInfo, "Control",
+                   "Negotiated: video codec %d, audio codec %d, up to %d fps, keep playing after loss: %s",
+                   (int) videoCodec, (int) audioCodec, ihsConf.maxFramerate > 0 ? (int) ihsConf.maxFramerate : 60,
+                   ihsConf.keepPlayingAfterLoss ? "yes" : "no");
+
     CNegotiatedConfig config = CNEGOTIATED_CONFIG__INIT;
     PROTOBUF_C_SET_VALUE(config, reliable_data, false);
 

@@ -171,6 +171,8 @@ static void ChannelVideoInit(IHS_SessionChannel *channel, const void *config) {
     videoCh->config.width = message->width;
     videoCh->config.height = message->height;
     videoCh->config.codec = (IHS_StreamVideoCodec) message->codec;
+    IHS_SessionLog(channel->session, IHS_LogLevelInfo, "Video", "Video stream: %ux%u, codec %d",
+                   (unsigned) message->width, (unsigned) message->height, (int) message->codec);
     // colorspace (6) is newer than ihslib's copy of the protocol: protobuf-c keeps it as an unknown
     // field.
     videoCh->config.colorspace = (IHS_StreamVideoColorspace) IHS_UnknownVarint(&message->base, 6,
@@ -247,18 +249,18 @@ static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrame
         // Wait for 200ms after requesting keyframe. Then request again.
         uint64_t now = IHS_TimerNow();
         if (now - videoCh->states.waitingKeyFrame >= 200) {
-            IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video", "Keyframe wait timeout, re-request keyframe");
+            IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video", "Keyframe wait timeout, re-request keyframe");
             IHS_SessionChannelDataLost(channel);
             videoCh->states.waitingKeyFrame = IHS_TimerNow();
         }
     } else if (vhead.sequence != videoCh->states.expectedSequence) {
         if (channel->session->keepPlayingAfterLoss) {
-            IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
+            IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
                            "Unexpected video frame sequence %u (expect %u), reporting the loss", vhead.sequence,
                            videoCh->states.expectedSequence);
             ReportLossNoWait(channel);
         } else if (videoCh->states.waitingKeyFrame == 0) {
-            IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
+            IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
                            "Unexpected video frame sequence %u (expect %u), request keyframe", vhead.sequence,
                            videoCh->states.expectedSequence);
             IHS_SessionChannelDataLost(channel);
@@ -281,7 +283,7 @@ static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrame
                                                           config->sessionKey, config->sessionKeyLen,
                                                           IHS_BufferPointer(&plain), &outLen);
         if (decryptRet != 0) {
-            IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
+            IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
                            "Failed to decrypt video frame: %d, request keyframe", decryptRet);
             IHS_BufferClear(&plain, true);
             IHS_SessionChannelDataLost(channel);
@@ -400,7 +402,7 @@ static void CheckPartialOverflow(IHS_SessionChannel *channel) {
     if (span <= overflowSpan) {
         return;
     }
-    IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video",
+    IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
                    "Partial frames stalled for %u ms, request keyframe", span * 1000 / 65536);
     if (channel->session->keepPlayingAfterLoss) {
         DiscardPending(videoCh);
@@ -417,7 +419,7 @@ static void ApplyDecoderReset(IHS_SessionChannel *channel) {
     // fragment and the half-assembled frame (FlushPendingData @ 0x206134), clears the assembly
     // state and waits for a keyframe. expectedSequence is deliberately untouched — the reference
     // does not reset it across a decoder reset.
-    IHS_SessionLog(channel->session, IHS_LogLevelWarn, "Video", "Decoder reset, request keyframe");
+    IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video", "Decoder reset, request keyframe");
     DiscardPending(videoCh);
     videoCh->states.frameFinished = false;
     videoCh->states.frameStarted = false;
@@ -432,7 +434,7 @@ static void DiscardPending(IHS_SessionChannelVideo *channel) {
     IHS_BufferClear(&channel->frame.buffer, 0);
     size_t clearedCount = IHS_VideoPartialFramesClear(&channel->frame.partial);
     if (clearedCount > 0) {
-        IHS_SessionLog(((IHS_SessionChannel *) channel)->session, IHS_LogLevelWarn, "Video",
+        IHS_SessionLogLimited(((IHS_SessionChannel *) channel)->session, IHS_LogLevelWarn, "Video",
                        "%u partial frames was cleared", clearedCount);
     }
     channel->frame.flags = 0;
@@ -471,7 +473,7 @@ static IHS_StreamVideoSubmitResult SubmitFrame(IHS_SessionChannel *channel, IHS_
     if (result == IHS_StreamVideoSubmitReportLost) {
         // The immediate request of the pair, as FinalDecode sends one at 0x203844 before the reset
         // it asked for has run. The caller applies the reset, which sends the second.
-        IHS_SessionLog(session, IHS_LogLevelInfo, "Video", "Decoder reported frame lost.");
+        IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Video", "Decoder reported frame lost.");
         IHS_SessionChannelDataLost(channel);
     } else if (result == IHS_StreamVideoSubmitError) {
         IHS_SessionLog(session, IHS_LogLevelError, "Video", "Decoder reported unrecoverable error.");

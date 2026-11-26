@@ -152,7 +152,9 @@ static void OnDisconnect(IHS_SessionChannel *channel) {
     if (session->callbacks.session && session->callbacks.session->disconnected) {
         session->callbacks.session->disconnected(session, session->callbackContexts.session);
     }
-    IHS_SessionLog(session, IHS_LogLevelInfo, "Session", "Session disconnected");
+    IHS_SessionLog(session, IHS_LogLevelInfo, "Session", "Session disconnected (%s)",
+                   IHS_SessionCounterGet(session->timedOut) ? "the host went silent for 10 s"
+                                                            : "closed by the host or by a disconnect request");
     IHS_SessionChannel *control = IHS_SessionChannelFor(session, IHS_SessionChannelIdControl);
     IHS_SessionChannelControlStopHeartbeat(control);
     IHS_HIDManagerCloseAll(session->hidManager);
