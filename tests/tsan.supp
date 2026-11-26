@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions, used by the TSan job in .github/workflows/build-test.yml.
+#
+# libdbus is loaded by SDL's init/quit (dbus_connection_close) and takes its own locks in an order
+# TSan reports as an inversion. Every frame of those reports is inside libdbus; none is ihslib's.
+# Only libdbus is listed: nothing from ihslib is suppressed here.
+deadlock:libdbus-1.so
+race:libdbus-1.so
