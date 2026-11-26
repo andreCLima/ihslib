@@ -79,8 +79,16 @@ void IHS_SessionPacketsWindowDestroy(IHS_SessionPacketsWindow *window) {
 bool IHS_SessionPacketsWindowAdd(IHS_SessionPacketsWindow *window, IHS_SessionPacket *packet) {
     /* Calculate distance of 2 items */
     int tailOffset = window->tail.pos < 0 ? 1 : (int16_t) (packet->header.packetId - window->tail.id);
-    /* We already processed this packet, so ignore it */
-    if (tailOffset < 0 && -tailOffset > IHS_SessionPacketsWindowSize(window)) {
+    /* The window holds tail.id - size + 1 to tail.id; anything at or before that start was polled
+     * already. The old test let through a resend of the newest packet once everything had been
+     * polled (offset 0, size 0), and of the packet just before head (offset -size). Steam resends
+     * most control packets once, so this happened all the time: the copy went into a free slot
+     * outside the window, and 128 ids later the real packet landed on that slot, was dropped as
+     * a duplicate, and the window stopped short of it. The ACK then stayed one behind while Steam
+     * resent that packet hundreds of times a second, for seconds or minutes, until a newer packet
+     * moved the tail on and the stale copy was delivered in its place. Controller freezes on
+     * 26/11 lined up with these gaps. */
+    if (tailOffset <= 0 && -tailOffset >= IHS_SessionPacketsWindowSize(window)) {
         return true;
     }
     /* Further ahead than the window holds: the stream went on without us (on Wi-Fi, a gap of a few
@@ -97,9 +105,20 @@ bool IHS_SessionPacketsWindowAdd(IHS_SessionPacketsWindow *window, IHS_SessionPa
     }
     const int writePos = (window->tail.pos + tailOffset + window->capacity) % window->capacity;
     IHS_SessionWindowItem *tailPkt = &window->data[writePos];
-    /* Ignore if the slot is used */
-    if (FrameItemIsUsed(tailPkt)) {
-        return true;
+    if (tailOffset <= 0) {
+        /* Within the window, a used slot holds this packet already: a resend. */
+        if (FrameItemIsUsed(tailPkt)) {
+            return true;
+        }
+    } else {
+        /* Past the tail every slot must be free, the skipped ones included, or a leftover would
+         * later be read as the packet that belongs there. */
+        for (int i = 1; i <= tailOffset; i++) {
+            IHS_SessionWindowItem *item = &window->data[(window->tail.pos + i + window->capacity) % window->capacity];
+            if (FrameItemIsUsed(item)) {
+                FrameItemRecycle(item);
+            }
+        }
     }
     FrameItemUsePacket(tailPkt, packet);
 

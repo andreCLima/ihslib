@@ -17,6 +17,8 @@ ihs_add_test(frame_stats test_frame_stats.c)
 
 ihs_add_test(retransmission test_retransmission.c)
 
+ihs_add_test(packets_window test_packets_window.c)
+
 ihs_add_test(retransmission_ack test_retransmission_ack.c)
 target_link_libraries(ihstest_retransmission_ack PRIVATE ihs-test-session)
 
