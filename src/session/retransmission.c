@@ -293,4 +293,3 @@ static void RetransmissionTimerEnd(void *context) {
 static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context) {
     return item == context;
 }
-}
