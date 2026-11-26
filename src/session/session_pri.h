@@ -100,6 +100,23 @@ typedef struct IHS_SessionCounters {
     uint32_t hidSlowJobs;
     /* Pending reliable packets cancelled by an ACK for a later id. */
     uint32_t ackCumulativeCancels;
+    /* Where the controller path can stop (see IHS_SessionStreamStats). Fields marked "interval" are
+     * taken and cleared by IHS_SessionGetStreamStats. */
+    uint32_t inputTransitions;
+    uint32_t inputDisabledDrops;
+    uint32_t sendQueueDepth;          /* now */
+    uint32_t sendQueueDepthMax;       /* interval */
+    uint32_t sendQueueLatencyMaxMs;   /* interval */
+    uint32_t controlPacketsSent;
+    uint32_t timerLagMaxMs;           /* interval, kept by the timer */
+    uint32_t controlAckMaxMs;         /* interval */
+    uint32_t controlAckSumMs;         /* interval */
+    uint32_t controlAckCount;         /* interval */
+    uint32_t controlAckStalls;
+    uint32_t hidReportsGenerated;
+    uint32_t hidReportsSent;
+    uint32_t hidUseLockMaxWaitMs;     /* interval */
+    uint32_t hidInputStalls;
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)
@@ -130,6 +147,8 @@ struct IHS_Session {
     IHS_SessionCounters counters;
     /* Liveness: IHS_TimerNow() of the last packet received (low 32 bits), checked every second. */
     uint32_t lastReceivedMs;
+    /* videoPackets as of the last liveness tick, to tell a live network from a dead one. */
+    uint32_t livenessVideoPackets;
     bool timedOut;
     /* IHS_SessionConfig.keepPlayingAfterLoss, from the negotiation. */
     bool keepPlayingAfterLoss;

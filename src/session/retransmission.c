@@ -141,7 +141,37 @@ typedef struct AckScan {
     uint8_t exactRetransmitCount;
     uint32_t exactSendTimestamp;
     uint32_t covered;
+    uint32_t nowTicks;
+    /* Control channel waits (first send to ACK), and the longest wait of any channel. */
+    uint32_t controlAcks, controlAckSumMs, controlAckMaxMs;
+    uint32_t maxWaitedMs;
 } AckScan;
+
+/* How long a pending packet has waited since its first send: the back-off up to its latest send
+ * (as scheduled) plus the time since that send. */
+static uint32_t PendingWaitedMs(const PendingRetransmission *item, uint32_t nowTicks) {
+    int32_t sinceSend = (int32_t) (nowTicks - item->packet.header.sendTimestamp);
+    uint64_t ms = RetransmissionWaited(item->packet.header.retransmitCount);
+    if (sinceSend > 0) {
+        ms += IHS_SESSION_PACKET_TIMESTAMP_TO_MILLIS(sinceSend);
+    }
+    return ms > UINT32_MAX ? UINT32_MAX : (uint32_t) ms;
+}
+
+/* Fold the wait of a packet an ACK just stopped into the scan. */
+static void AckScanAccount(AckScan *scan, const PendingRetransmission *item) {
+    uint32_t waited = PendingWaitedMs(item, scan->nowTicks);
+    if (waited > scan->maxWaitedMs) {
+        scan->maxWaitedMs = waited;
+    }
+    if (item->packet.header.channelId == IHS_SessionChannelIdControl) {
+        scan->controlAcks++;
+        scan->controlAckSumMs += waited;
+        if (waited > scan->controlAckMaxMs) {
+            scan->controlAckMaxMs = waited;
+        }
+    }
+}
 
 static bool RetransmissionAckScanPredicate(PendingRetransmission *item, void *context) {
     AckScan *scan = context;
@@ -156,9 +186,11 @@ static bool RetransmissionAckScanPredicate(PendingRetransmission *item, void *co
         scan->exactFound = true;
         scan->exactRetransmitCount = item->packet.header.retransmitCount;
         scan->exactSendTimestamp = item->packet.header.sendTimestamp;
+        AckScanAccount(scan, item);
     } else if (scan->cumulative && behind <= 0) {
         item->acked = true;
         scan->covered++;
+        AckScanAccount(scan, item);
     }
     return false;
 }
@@ -175,6 +207,7 @@ bool IHS_RetransmissionAck(IHS_SessionRetransmission *retransmission, IHS_Sessio
             .packetId = packetId,
             .fragmentId = fragmentId,
             .cumulative = cumulative,
+            .nowTicks = IHS_SessionPacketTimestamp(),
     };
     uint32_t logReceived = 0, logCovered = 0, logNone = 0;
     bool logNow = false;
@@ -199,6 +232,14 @@ bool IHS_RetransmissionAck(IHS_SessionRetransmission *retransmission, IHS_Sessio
     }
     IHS_MutexUnlock(retransmission->lock);
     IHS_Session *session = retransmission->session;
+    if (scan.maxWaitedMs > 0) {
+        IHS_SessionCounterMax(&session->counters.retransmitMaxDelayMs, scan.maxWaitedMs);
+    }
+    if (scan.controlAcks > 0) {
+        IHS_SessionCounterAdd(session->counters.controlAckCount, scan.controlAcks);
+        IHS_SessionCounterAdd(session->counters.controlAckSumMs, scan.controlAckSumMs);
+        IHS_SessionCounterMax(&session->counters.controlAckMaxMs, scan.controlAckMaxMs);
+    }
     if (scan.covered > 0) {
         IHS_SessionCounterAdd(session->counters.ackCumulativeCancels, scan.covered);
     }
@@ -264,6 +305,8 @@ static uint64_t RetransmissionTimerRun(int runCount, void *context) {
         if (packet->header.retransmitCount >= IHS_RETRANSMISSION_ATTEMPTS) {
             // That was the last send: nothing queues it again.
             IHS_SessionCounterAdd(retransmission->session->counters.retransmitGaveUp, 1);
+            IHS_SessionCounterMax(&retransmission->session->counters.retransmitMaxDelayMs,
+                                  (uint32_t) RetransmissionWaited(packet->header.retransmitCount));
             IHS_SessionLogLimited(retransmission->session, IHS_LogLevelError, "Retransmission",
                            "Gave up on reliable packet (channel %u, id %u, fragment %d) after %u sends, ~%u ms; "
                            "Steam delivers control messages in order, so later ones may be stuck behind it",
@@ -292,4 +335,29 @@ static void RetransmissionTimerEnd(void *context) {
 
 static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context) {
     return item == context;
+}
+
+typedef struct OldestScan {
+    IHS_SessionChannelId channelId;
+    uint32_t nowTicks;
+    uint32_t oldestMs;
+} OldestScan;
+
+static bool RetransmissionOldestPredicate(PendingRetransmission *item, void *context) {
+    OldestScan *scan = context;
+    if (!item->acked && item->packet.header.channelId == scan->channelId) {
+        uint32_t waited = PendingWaitedMs(item, scan->nowTicks);
+        if (waited > scan->oldestMs) {
+            scan->oldestMs = waited;
+        }
+    }
+    return false;
+}
+
+uint32_t IHS_RetransmissionOldestPendingMs(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId) {
+    OldestScan scan = {.channelId = channelId, .nowTicks = IHS_SessionPacketTimestamp()};
+    IHS_MutexLock(retransmission->lock);
+    IHS_QueueFindBy(retransmission->queue, RetransmissionOldestPredicate, &scan);
+    IHS_MutexUnlock(retransmission->lock);
+    return scan.oldestMs;
 }

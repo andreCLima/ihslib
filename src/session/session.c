@@ -45,6 +45,7 @@
 typedef struct IHS_QueueItem {
     IHS_SessionPacket packet;
     bool retransmit;
+    uint32_t enqueuedMs;
 } QueuedPacket;
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data);
@@ -175,6 +176,10 @@ bool IHS_SessionQueuePacket(IHS_Session *session, IHS_SessionPacket *packet, boo
     // Move buffer ownership from packet to QueuedPacket
     QueuedPacket *item = QueuedPacketCreate(session, packet);
     item->retransmit = retransmit;
+    item->enqueuedMs = (uint32_t) IHS_TimerNow();
+    // The send thread lowers the depth without this mutex, so both sides use atomic updates.
+    uint32_t depth = __atomic_add_fetch(&session->counters.sendQueueDepth, 1, __ATOMIC_RELAXED);
+    IHS_SessionCounterMax(&session->counters.sendQueueDepthMax, depth);
 
     IHS_QueueAppend(session->sendQueue, item);
 
@@ -223,6 +228,27 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->hidResyncReports = IHS_SessionCounterGet(session->counters.hidResyncReports);
     stats->hidSlowJobs = IHS_SessionCounterGet(session->counters.hidSlowJobs);
     stats->ackCumulativeCancels = IHS_SessionCounterGet(session->counters.ackCumulativeCancels);
+    // Interval fields are taken (read and cleared) here. The session is not const underneath.
+    IHS_SessionCounters *counters = &((IHS_Session *) session)->counters;
+    stats->inputEnabled = ((const IHS_Session *) session)->state.streamingInput ? 1 : 0;
+    stats->inputTransitions = IHS_SessionCounterGet(counters->inputTransitions);
+    stats->inputDisabledDrops = IHS_SessionCounterGet(counters->inputDisabledDrops);
+    stats->sendQueueDepthMax = __atomic_exchange_n(&counters->sendQueueDepthMax, 0, __ATOMIC_RELAXED);
+    stats->sendQueueLatencyMaxMs = __atomic_exchange_n(&counters->sendQueueLatencyMaxMs, 0, __ATOMIC_RELAXED);
+    stats->controlPacketsSent = IHS_SessionCounterGet(counters->controlPacketsSent);
+    stats->timerLagMaxMs = IHS_TimerTakeMaxLag(session->timers);
+    uint32_t ackCount = __atomic_exchange_n(&counters->controlAckCount, 0, __ATOMIC_RELAXED);
+    uint32_t ackSum = __atomic_exchange_n(&counters->controlAckSumMs, 0, __ATOMIC_RELAXED);
+    stats->controlAckCount = ackCount;
+    stats->controlAckMaxMs = __atomic_exchange_n(&counters->controlAckMaxMs, 0, __ATOMIC_RELAXED);
+    stats->controlAckAvgMs = ackCount > 0 ? ackSum / ackCount : 0;
+    stats->controlOldestPendingMs = IHS_RetransmissionOldestPendingMs(
+            &((IHS_Session *) session)->retransmission, IHS_SessionChannelIdControl);
+    stats->controlAckStalls = IHS_SessionCounterGet(counters->controlAckStalls);
+    stats->hidReportsGenerated = IHS_SessionCounterGet(counters->hidReportsGenerated);
+    stats->hidReportsSent = IHS_SessionCounterGet(counters->hidReportsSent);
+    stats->hidUseLockMaxWaitMs = __atomic_exchange_n(&counters->hidUseLockMaxWaitMs, 0, __ATOMIC_RELAXED);
+    stats->hidInputStalls = IHS_SessionCounterGet(counters->hidInputStalls);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
@@ -322,6 +348,18 @@ static uint64_t LivenessRun(int runCount, void *context) {
     IHS_BaseLock(&session->base);
     bool connected = session->state.connectionState == IHS_SessionConnectionStateConnected;
     IHS_BaseUnlock(&session->base);
+    // Control messages unanswered while video still arrives: the network is fine, so it is Steam
+    // (or the order it delivers in) holding the controller back, not a dead link.
+    uint32_t videoNow = IHS_SessionCounterGet(session->counters.videoPackets) +
+                        IHS_SessionCounterGet(session->counters.fecShards);
+    bool videoAlive = videoNow != session->livenessVideoPackets;
+    session->livenessVideoPackets = videoNow;
+    uint32_t oldest = IHS_RetransmissionOldestPendingMs(&session->retransmission, IHS_SessionChannelIdControl);
+    if (connected && videoAlive && oldest > 500) {
+        IHS_SessionCounterAdd(session->counters.controlAckStalls, 1);
+        IHS_SessionLogLimited(session, IHS_LogLevelWarn, "Session",
+                              "Steam is not acknowledging control messages for %u ms (video is still arriving)", oldest);
+    }
     int32_t silent = IHS_SessionSilenceMs((uint32_t) IHS_TimerNow(), IHS_SessionCounterGet(session->lastReceivedMs));
     if (connected && silent >= (int32_t) HOST_SILENCE_TIMEOUT_MS && !IHS_SessionCounterGet(session->timedOut)) {
         IHS_SessionCounterSet(session->timedOut, true);
@@ -347,6 +385,13 @@ static void SessionSendWorker(void *context) {
         }
         IHS_MutexUnlock(session->sendQueueMutex);
 
+        // The depth drops as the packet leaves the queue; its wait ends when the send starts.
+        IHS_SessionCounterAdd(session->counters.sendQueueDepth, (uint32_t) -1);
+        IHS_SessionCounterMax(&session->counters.sendQueueLatencyMaxMs,
+                              (uint32_t) IHS_TimerNow() - queued->enqueuedMs);
+        if (queued->packet.header.channelId == IHS_SessionChannelIdControl) {
+            IHS_SessionCounterAdd(session->counters.controlPacketsSent, 1);
+        }
         IHS_SessionSendPacket(session, &queued->packet);
 
         if (queued->retransmit) {

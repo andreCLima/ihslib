@@ -78,6 +78,17 @@ int main(void) {
     assert(IHS_RetransmissionAck(r, IHS_SessionChannelIdControl, 10, 0, false));
     assert(!IHS_RetransmissionAck(r, IHS_SessionChannelIdControl, 12, 0, false));
 
+    // The acknowledgements above are in the stats once, and the interval starts again.
+    IHS_SessionStreamStats stats;
+    IHS_SessionGetStreamStats(session, &stats);
+    assert(stats.inputEnabled == 1);
+    assert(stats.controlAckCount > 0);
+    assert(stats.ackCumulativeCancels == 6);
+    assert(stats.controlOldestPendingMs == 0);  // everything on the control channel is acknowledged
+    IHS_SessionGetStreamStats(session, &stats);
+    assert(stats.controlAckCount == 0);
+    assert(stats.controlAckMaxMs == 0);
+
     IHS_SessionDestroy(session);
     return 0;
 }

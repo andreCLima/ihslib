@@ -122,7 +122,7 @@ void IHS_SessionChannelControlOnVideo(IHS_SessionChannel *channel, EStreamContro
                 IHS_SessionLog(session, IHS_LogLevelWarn, "Video", "Malformed CSetTargetBitrateMsg");
                 break;
             }
-            IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Video", "Host target bitrate: %d bps", message->bitrate);
+            IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Video", "Host target bitrate: %d kbps", message->bitrate);
             const IHS_StreamVideoCallbacks *callbacks = session->callbacks.video;
             if (callbacks && callbacks->setTargetBitrate) {
                 callbacks->setTargetBitrate(session, message->bitrate, session->callbackContexts.video);

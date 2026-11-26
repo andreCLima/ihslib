@@ -25,6 +25,7 @@
 #include <assert.h>
 #include "device.h"
 #include "manager.h"
+#include "session/session_pri.h"
 
 IHS_HIDDevice *IHS_HIDDeviceCreate(const IHS_HIDDeviceClass *cls) {
     IHS_HIDDevice *device = cls->alloc(cls);
@@ -105,12 +106,28 @@ int IHS_HIDDeviceRequestDisconnect(IHS_HIDDevice *device, int method, const uint
     return device->cls->requestDisconnect(device, method, data, dataLen);
 }
 
+/* A report was produced for this device and waits for the next send. Counted for the stats, and the
+ * time of the first one still waiting is kept so a send that never comes can be told apart from
+ * input that never happened. (A report the dedup dropped is not counted: it never needed sending.) */
+static void HIDReportQueued(IHS_HIDDevice *device) {
+    IHS_HIDManager *manager = device->managed->manager;
+    if (manager == NULL || manager->session == NULL) return;
+    IHS_SessionCounterAdd(manager->session->counters.hidReportsGenerated, 1);
+    uint32_t expected = 0;
+    __atomic_compare_exchange_n(&manager->firstUnsentMs, &expected, (uint32_t) IHS_TimerNow() | 1u, false,
+                                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+}
+
 void IHS_HIDDeviceReportAddFull(IHS_HIDDevice *device, const uint8_t *current, size_t len) {
+    size_t before = device->managed->reportHolder.reportItems.size;
     IHS_HIDReportHolderAddFull(&device->managed->reportHolder, current, len);
+    if (device->managed->reportHolder.reportItems.size > before) HIDReportQueued(device);
 }
 
 void IHS_HIDDeviceReportAddDelta(IHS_HIDDevice *device, const uint8_t *previous, const uint8_t *current, size_t len) {
+    size_t before = device->managed->reportHolder.reportItems.size;
     IHS_HIDReportHolderAddDelta(&device->managed->reportHolder, previous, current, len);
+    if (device->managed->reportHolder.reportItems.size > before) HIDReportQueued(device);
 }
 
 void IHS_HIDDeviceLock(IHS_HIDDevice *device) {

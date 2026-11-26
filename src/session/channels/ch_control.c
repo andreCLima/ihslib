@@ -210,8 +210,9 @@ static void OnControlReceived(IHS_SessionChannel *channel, IHS_SessionPacket *pa
                 }
                 case IHS_SessionFrameDecryptFailed: {
                     IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Control",
-                                   "Failed to decrypt control message. id=%d, retransmit=%d, type=%s",
-                                   frame.header.packetId, frame.header.retransmitCount, ControlMessageTypeName(type));
+                                   "Failed to decrypt control message. id=%d, retransmit=%d, type=%s, %zu bytes, %d fragment(s)",
+                                   frame.header.packetId, frame.header.retransmitCount, ControlMessageTypeName(type),
+                                   (size_t) frame.body.size, (int) frame.header.fragmentId);
                     break;
                 }
             }
@@ -416,8 +417,8 @@ void IHS_SessionChannelControlOnMessageReceived(IHS_SessionChannel *channel, ESt
             break;
         }
         default: {
-            IHS_SessionLog(channel->session, IHS_LogLevelInfo, "Control", "Unhandled control message: %s",
-                           ControlMessageTypeName(type));
+            IHS_SessionLogLimited(channel->session, IHS_LogLevelInfo, "Control", "Unhandled control message: %s (type %d)",
+                           ControlMessageTypeName(type), (int) type);
             break;
         }
     }
@@ -453,7 +454,16 @@ static void OnSetClientConfig(IHS_SessionChannel *channel, const CSetStreamingCl
     // Each flag is only updated if the server actually included it; absent fields keep the
     // current value (which started at true at session creation).
     if (config->has_enable_input_streaming) {
+        bool before = session->state.streamingInput;
         session->state.streamingInput = config->enable_input_streaming;
+        if (before != session->state.streamingInput) {
+            // The whole controller path goes quiet while this is off (reports and HID replies are
+            // dropped on our side), so every flip is worth a line.
+            IHS_SessionCounterAdd(session->counters.inputTransitions, 1);
+            IHS_SessionLogLimited(session, IHS_LogLevelInfo, "Control",
+                                  "Steam turned input streaming %s (SetStreamingClientConfig)",
+                                  session->state.streamingInput ? "on" : "off");
+        }
     }
     if (config->has_enable_audio_streaming) {
         session->state.streamingAudio = config->enable_audio_streaming;

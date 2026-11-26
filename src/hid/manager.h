@@ -60,6 +60,11 @@ struct IHS_HIDManager {
      */
     uint32_t fullReportTicks;
     /**
+     * IHS_TimerNow() (low 32 bits, never 0) of the oldest report produced and not yet sent; 0 when
+     * nothing waits. Atomic: devices set it, the sender clears it.
+     */
+    uint32_t firstUnsentMs;
+    /**
      * Worker for HID requests that can block (reads with a timeout, feature reports that retry),
      * so they do not hold up the thread that receives packets. Jobs run in the order they were
      * deferred. Started on the first IHS_HIDManagerDefer; stopped by IHS_HIDManagerStopWorker.

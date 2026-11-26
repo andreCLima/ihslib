@@ -108,7 +108,7 @@ typedef struct IHS_StreamVideoCallbacks {
                                uint32_t reasons, void *context);
 
     /**
-     * Host has changed the target encode bitrate (bps). This is the
+     * Host has changed the target encode bitrate (kbit/s: a 20 Mbit/s stream reports 20000). This is the
      * post-override effective rate; the decoder may use it as a buffer-sizing
      * hint. May be NULL.
      */

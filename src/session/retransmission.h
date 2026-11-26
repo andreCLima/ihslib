@@ -81,3 +81,10 @@ uint64_t IHS_RetransmissionInterval(uint8_t retransmitCount);
  */
 bool IHS_RetransmissionAck(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId,
                            uint16_t packetId, uint16_t fragmentId, bool cumulative);
+
+
+/**
+ * How long the oldest packet of \p channelId still waiting for its ACK has waited since its first
+ * send, in ms; 0 if none is pending. Walks the queue under the lock.
+ */
+uint32_t IHS_RetransmissionOldestPendingMs(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId);

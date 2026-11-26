@@ -41,6 +41,7 @@ static bool HandleSensorEvent(IHS_HIDManager *manager, const SDL_ControllerSenso
 bool IHS_HIDHandleSDLEvent(IHS_Session *session, const SDL_Event *event) {
     switch (event->type) {
         case SDL_CONTROLLERDEVICEADDED: {
+            IHS_SessionLog(session, IHS_LogLevelInfo, "HID.SDL", "Controller added (SDL device index %d)", event->cdevice.which);
             IHS_SessionHIDNotifyDeviceChange(session);
             return true;
         }
@@ -113,6 +114,7 @@ static bool HandleRemoveEvent(IHS_HIDManager *manager, const SDL_ControllerDevic
     if (managed == NULL) {
         return false;
     }
+    IHS_SessionLog(manager->session, IHS_LogLevelInfo, "HID.SDL", "Controller removed (id=%u)", managed->id);
     IHS_HIDManagedDeviceClose(managed);
     return true;
 }

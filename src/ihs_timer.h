@@ -70,3 +70,9 @@ void *IHS_TimerTaskGetContext(IHS_TimerTask *task);
 int IHS_TimerTaskGetRunCount(const IHS_TimerTask *task);
 
 uint64_t IHS_TimerNow();
+
+/**
+ * The latest a task of this timer started after the time it was due, in ms, since the previous call.
+ * Near zero while the timer thread keeps up; grows when a task holds it.
+ */
+uint32_t IHS_TimerTakeMaxLag(IHS_Timer *timer);

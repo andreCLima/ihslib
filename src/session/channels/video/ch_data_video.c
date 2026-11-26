@@ -256,13 +256,13 @@ static void DataReceived(IHS_SessionChannel *channel, const IHS_SessionDataFrame
     } else if (vhead.sequence != videoCh->states.expectedSequence) {
         if (channel->session->keepPlayingAfterLoss) {
             IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
-                           "Unexpected video frame sequence %u (expect %u), reporting the loss", vhead.sequence,
-                           videoCh->states.expectedSequence);
+                           "Video frame %u lost (unrecoverable; next to arrive is %u), reporting the loss",
+                           videoCh->states.expectedSequence, vhead.sequence);
             ReportLossNoWait(channel);
         } else if (videoCh->states.waitingKeyFrame == 0) {
             IHS_SessionLogLimited(channel->session, IHS_LogLevelWarn, "Video",
-                           "Unexpected video frame sequence %u (expect %u), request keyframe", vhead.sequence,
-                           videoCh->states.expectedSequence);
+                           "Video frame %u lost (unrecoverable; next to arrive is %u), requesting a keyframe",
+                           videoCh->states.expectedSequence, vhead.sequence);
             IHS_SessionChannelDataLost(channel);
             videoCh->states.waitingKeyFrame = IHS_TimerNow();
         }

@@ -249,7 +249,10 @@ bool IHS_SessionChannelControlSendHIDMsg(IHS_SessionChannel *channel, const CHID
     // IsStreaming() && BStreamingInput(). If the server disabled input streaming via
     // OnSetClientConfig, drop the message client-side rather than burning bandwidth on
     // something the server has told us it isn't reading.
-    if (!IHS_SessionInputEnabled(channel->session)) return false;
+    if (!IHS_SessionInputEnabled(channel->session)) {
+        IHS_SessionCounterAdd(channel->session->counters.inputDisabledDrops, 1);
+        return false;
+    }
     CRemoteHIDMsg wrapped = CREMOTE_HIDMSG__INIT;
     size_t messageSize = chidmessage_from_remote__get_packed_size(message);
     wrapped.has_data = true;
@@ -323,7 +326,10 @@ bool IHS_SessionHIDSendReport(IHS_Session *session) {
     // Short-circuit before the per-device lock storm if input streaming is disabled.
     // The polling task still calls device->poll() so device state stays current; only
     // the wire send is suppressed (matches Steam's BStreamingInput gating behavior).
-    if (!IHS_SessionInputEnabled(session)) return false;
+    if (!IHS_SessionInputEnabled(session)) {
+        IHS_SessionCounterAdd(session->counters.inputDisabledDrops, 1);
+        return false;
+    }
     CHIDMessageFromRemote outMessage = CHIDMESSAGE_FROM_REMOTE__INIT;
     outMessage.command_case = CHIDMESSAGE_FROM_REMOTE__COMMAND_REPORTS;
     CHIDMessageFromRemote__DeviceInputReports reports = CHIDMESSAGE_FROM_REMOTE__DEVICE_INPUT_REPORTS__INIT;
@@ -370,6 +376,12 @@ bool IHS_SessionHIDSendReport(IHS_Session *session) {
         }
     }
 
+    // Holders are still locked, so no report can be added between counting and clearing the wait.
+    uint32_t items = 0;
+    for (size_t i = 0; i < session->hidManager->inputReports.size; ++i) {
+        items += (uint32_t) (*(IHS_HIDDeviceReportMessage **) IHS_ArrayListGet(&session->hidManager->inputReports, i))->n_reports;
+    }
+    __atomic_store_n(&session->hidManager->firstUnsentMs, 0, __ATOMIC_RELAXED);
     // Reset holders and unlock — the packed snapshot is self-contained from here on.
     for (size_t i = 0; i < deviceCount; ++i) {
         IHS_HIDReportHolderResetMessage(&deviceSnapshot[i]->reportHolder);
@@ -390,6 +402,9 @@ bool IHS_SessionHIDSendReport(IHS_Session *session) {
         ret = IHS_SessionChannelControlSend(channel, k_EStreamControlRemoteHID,
                                             (const ProtobufCMessage *) &wrapped, IHS_PACKET_ID_NEXT);
         free(packed);
+        if (ret) {
+            IHS_SessionCounterAdd(session->counters.hidReportsSent, items);
+        }
     }
     return ret;
 }
@@ -410,15 +425,15 @@ static void HandleDeviceOpen(IHS_SessionChannel *channel, IHS_HIDManager *manage
     PROTOBUF_C_SET_VALUE(response, request_id, message->request_id);
     PROTOBUF_C_SET_VALUE(response, result, managed->id);
     SendRequestResponse(channel, &response);
-    IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID", "Message %u: Open(path=%s, product_string=%s) => id=%u",
-                   message->request_id, cmd->info->path, cmd->info->product_string, managed->id);
+    IHS_SessionLog(channel->session, IHS_LogLevelInfo, "HID", "Steam opened controller: Open(path=%s, product_string=%s) => id=%u (request %u)",
+                   cmd->info->path, cmd->info->product_string, managed->id, message->request_id);
 }
 
 static void HandleDeviceClose(IHS_SessionChannel *channel, IHS_HIDManager *manager,
                               const CHIDMessageToRemote *message) {
     CHIDMessageToRemote__DeviceClose *cmd = message->device_close;
     IHS_HIDManagedDevice *managed = IHS_HIDManagerFindDeviceByID(manager, cmd->device);
-    IHS_SessionLog(channel->session, IHS_LogLevelDebug, "HID", "Message %u: Close(id=%u), found=%u",
+    IHS_SessionLog(channel->session, IHS_LogLevelInfo, "HID", "Steam closed controller: Message %u: Close(id=%u), found=%u",
                    message->request_id, cmd->device, managed != NULL);
     // If the device got closed on client side, it should be NULL here.
     if (managed != NULL) {
@@ -627,6 +642,8 @@ static void HandleDeviceStartInputReports(IHS_SessionChannel *channel, IHS_HIDMa
     // Under the device lock: the poll task reads the length to know the host started reports.
     IHS_MutexLock(managed->lock);
     IHS_HIDReportHolderSetReportLength(&managed->reportHolder, cmd->length);
+    IHS_SessionLog(channel->session, IHS_LogLevelInfo, "HID", "Steam started input reports for controller %u (report length %u)",
+                   cmd->device, (unsigned) cmd->length);
     IHS_MutexUnlock(managed->lock);
     if (IHS_HIDDeviceStartInputReports(managed->device, cmd->length) == 0) {
         // Here we assume this managed has generated one full report, and send it right away.
@@ -671,6 +688,8 @@ static void HandleDeviceDisconnect(IHS_SessionChannel *channel, IHS_HIDManager *
         return;
     }
 
+    IHS_SessionLog(channel->session, IHS_LogLevelInfo, "HID", "Steam asked to disconnect controller %u (method %d)",
+                   cmd->device, (int) cmd->disconnectmethod);
     IHS_HIDDeviceRequestDisconnect(managed->device, cmd->disconnectmethod, cmd->data.data, cmd->data.len);
 }
 

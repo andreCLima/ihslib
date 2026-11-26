@@ -258,7 +258,7 @@ typedef struct IHS_SessionStreamStats {
     uint32_t retransmissions;
     /** Reliable packets given up on after the last attempt (about 12 s). */
     uint32_t retransmitGaveUp;
-    /** Longest an acknowledged reliable packet waited after its first send, in ms (an estimate). */
+    /** Longest a reliable packet waited after its first send, acknowledged or given up, in ms (from the back-off schedule). */
     uint32_t retransmitMaxDelayMs;
     /** Times Steam asked for a full controller report (a delta was lost or its CRC did not match). */
     uint32_t hidFullReportRequests;
@@ -268,6 +268,40 @@ typedef struct IHS_SessionStreamStats {
     uint32_t hidSlowJobs;
     /** Reliable packets stopped by an ACK for a later id (Steam acknowledges the newest of a burst). */
     uint32_t ackCumulativeCancels;
+    /*
+     * Where the controller path can stop. "Interval" fields cover the time since the previous call
+     * of IHS_SessionGetStreamStats and start again from zero on each call, so call it from one
+     * place only (the app's periodic stats line); the others are totals since the session began.
+     */
+    /** The host currently lets input through (1) or has turned it off (0). */
+    uint32_t inputEnabled;
+    /** Times the host switched input streaming on or off. */
+    uint32_t inputTransitions;
+    /** Controller messages dropped because the host had input off. */
+    uint32_t inputDisabledDrops;
+    /** Interval: most packets waiting in the send queue at once. */
+    uint32_t sendQueueDepthMax;
+    /** Interval: longest a packet waited in the send queue before it was sent, in ms. */
+    uint32_t sendQueueLatencyMaxMs;
+    /** Control channel packets sent, resends included. */
+    uint32_t controlPacketsSent;
+    /** Interval: latest a timer task (controller poll, resends) started after it was due, in ms. */
+    uint32_t timerLagMaxMs;
+    /** Interval: control packets acknowledged, and the longest and mean wait from first send, in ms. */
+    uint32_t controlAckCount;
+    uint32_t controlAckMaxMs;
+    uint32_t controlAckAvgMs;
+    /** How long the oldest unacknowledged control packet has waited at the time of the call, in ms. */
+    uint32_t controlOldestPendingMs;
+    /** Times the host went over 500 ms without acknowledging control packets while video kept coming. */
+    uint32_t controlAckStalls;
+    /** Controller reports produced (changes and full reports) and put on the wire. */
+    uint32_t hidReportsGenerated;
+    uint32_t hidReportsSent;
+    /** Interval: longest a controller event or request waited for a controller in use, in ms. */
+    uint32_t hidUseLockMaxWaitMs;
+    /** Times controller input waited over 200 ms to be sent. */
+    uint32_t hidInputStalls;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

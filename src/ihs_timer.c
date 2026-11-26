@@ -35,6 +35,8 @@
 struct IHS_Timer {
     IHS_Queue *tasks;
     IHS_Mutex *mutex;
+    /* Latest a task started after it was due, since the last IHS_TimerTakeMaxLag (ms). */
+    uint32_t maxLagMs;
 };
 
 struct IHS_TimerTask {
@@ -240,6 +242,12 @@ static bool TaskExecute(IHS_TimerTask *task, IHS_Timer *timer) {
     if (task->nextExecution > IHS_TimerNow()) {
         return false;
     }
+    uint64_t late = IHS_TimerNow() - task->nextExecution;
+    uint32_t lag = late > UINT32_MAX ? UINT32_MAX : (uint32_t) late;
+    uint32_t seen = __atomic_load_n(&timer->maxLagMs, __ATOMIC_RELAXED);
+    while (seen < lag && !__atomic_compare_exchange_n(&timer->maxLagMs, &seen, lag, true, __ATOMIC_RELAXED,
+                                                      __ATOMIC_RELAXED)) {
+    }
     uint64_t timeout = task->run(task->runCount, task->context);
     task->runCount += 1;
     if (timeout == 0) {
@@ -254,4 +262,7 @@ static void TaskDestroy(IHS_TimerTask *task, IHS_Timer *timer) {
     if (task->end) {
         task->end(task->context);
     }
+}
+uint32_t IHS_TimerTakeMaxLag(IHS_Timer *timer) {
+    return __atomic_exchange_n(&timer->maxLagMs, 0, __ATOMIC_RELAXED);
 }

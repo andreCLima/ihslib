@@ -239,6 +239,16 @@ static uint64_t HIDPollTick(int runCount, void *context) {
     if (!IHS_SessionInputEnabled(manager->session)) {
         return HID_POLL_INTERVAL_MS;
     }
+    // Input produced but not on the wire for 200 ms: the send path is stuck (a held lock, a failing
+    // send). Restart the clock when reporting so one stall is one count, not one per tick.
+    uint32_t firstUnsent = __atomic_load_n(&manager->firstUnsentMs, __ATOMIC_RELAXED);
+    uint32_t nowMs = (uint32_t) IHS_TimerNow();
+    if (firstUnsent != 0 && (int32_t) (nowMs - firstUnsent) > 200) {
+        __atomic_store_n(&manager->firstUnsentMs, nowMs | 1u, __ATOMIC_RELAXED);
+        IHS_SessionCounterAdd(manager->session->counters.hidInputStalls, 1);
+        IHS_SessionLogLimited(manager->session, IHS_LogLevelWarn, "HID",
+                              "Controller input has waited %u ms to be sent", (unsigned) (nowMs - firstUnsent));
+    }
     size_t count;
     IHS_HIDManagedDevice **snapshot = IHS_HIDManagerSnapshotOpenDevices(manager, &count);
     bool anyData = false;
@@ -387,7 +397,14 @@ bool IHS_HIDManagerWorkerStopping(IHS_HIDManager *manager) {
 }
 
 bool IHS_HIDManagerAcquireDevice(IHS_HIDManagedDevice *managed) {
+    // Time spent waiting: a held controller delays SDL events (button presses) by this much.
+    uint64_t waitStart = IHS_TimerNow();
     IHS_MutexLock(managed->useLock);
+    IHS_HIDManager *manager = managed->manager;
+    if (manager != NULL && manager->session != NULL) {
+        IHS_SessionCounterMax(&manager->session->counters.hidUseLockMaxWaitMs,
+                              (uint32_t) (IHS_TimerNow() - waitStart));
+    }
     // Read under useLock: Close sets it with useLock held, so it cannot flip while we hold it.
     if (managed->closed) {
         IHS_MutexUnlock(managed->useLock);
