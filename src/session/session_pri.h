@@ -98,6 +98,8 @@ typedef struct IHS_SessionCounters {
     uint32_t hidFullReportRequests;
     uint32_t hidResyncReports;
     uint32_t hidSlowJobs;
+    /* Pending reliable packets cancelled by an ACK for a later id. */
+    uint32_t ackCumulativeCancels;
 } IHS_SessionCounters;
 
 #define IHS_SessionCounterAdd(field, n) __atomic_fetch_add(&(field), (n), __ATOMIC_RELAXED)

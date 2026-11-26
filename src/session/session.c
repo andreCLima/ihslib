@@ -222,6 +222,7 @@ void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStat
     stats->hidFullReportRequests = IHS_SessionCounterGet(session->counters.hidFullReportRequests);
     stats->hidResyncReports = IHS_SessionCounterGet(session->counters.hidResyncReports);
     stats->hidSlowJobs = IHS_SessionCounterGet(session->counters.hidSlowJobs);
+    stats->ackCumulativeCancels = IHS_SessionCounterGet(session->counters.ackCumulativeCancels);
 }
 
 static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address, IHS_Buffer *data) {
@@ -238,8 +239,15 @@ static void SessionRecvCallback(IHS_Base *base, const IHS_SocketAddress *address
     IHS_SessionChannelId channelId = packet.header.channelId;
     IHS_SessionPacketType packetType = packet.header.type;
     if (packetType == IHS_SessionPacketTypeACK || packetType == IHS_SessionPacketTypeNACK) {
-        // Stop retransmission task
-        IHS_SessionCancelRetransmission(session, channelId, packet.header.packetId, packet.header.fragmentId);
+        // Stop retransmission. Steam sends one ACK for the newest packet when several arrive
+        // together and counts on it covering the earlier ones (our own ACKs work that way too, see
+        // control-cumulative-ack): matching only the exact id left those resending 52 times, ~22000
+        // resends in a clean 20-minute session, which flooded the send queue and the timer thread.
+        // A NACK is a refusal of that packet alone, so it stays exact. The discovery channel only
+        // has handshake packets, all with id 0 and no order between them, so it stays exact too.
+        bool cumulative = packetType == IHS_SessionPacketTypeACK && channelId != IHS_SessionChannelIdDiscovery;
+        IHS_RetransmissionAck(&session->retransmission, channelId, packet.header.packetId,
+                              (uint16_t) packet.header.fragmentId, cumulative);
     }
     IHS_SessionChannel *channel = IHS_SessionChannelFor(session, channelId);
     if (channel != NULL) {

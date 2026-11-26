@@ -266,6 +266,8 @@ typedef struct IHS_SessionStreamStats {
     uint32_t hidResyncReports;
     /** Controller requests that took the HID worker more than 50 ms. */
     uint32_t hidSlowJobs;
+    /** Reliable packets stopped by an ACK for a later id (Steam acknowledges the newest of a burst). */
+    uint32_t ackCumulativeCancels;
 } IHS_SessionStreamStats;
 
 void IHS_SessionGetStreamStats(const IHS_Session *session, IHS_SessionStreamStats *stats);

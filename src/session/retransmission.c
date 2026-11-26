@@ -68,12 +68,6 @@ typedef struct IHS_QueueItem {
     bool acked;
 } PendingRetransmission;
 
-typedef struct RetransmissionQuery {
-    IHS_SessionChannelId channelId;
-    uint16_t packetId;
-    uint16_t fragmentId;
-} RetransmissionQuery;
-
 static void RetransmissionQueueItemDestroy(PendingRetransmission *item, void *context);
 
 static uint64_t RetransmissionTimerRun(int runCount, void *context);
@@ -81,8 +75,6 @@ static uint64_t RetransmissionTimerRun(int runCount, void *context);
 static void RetransmissionTimerEnd(void *context);
 
 static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context);
-
-static bool RetransmissionPacketPredicate(PendingRetransmission *item, void *context);
 
 void IHS_RetransmissionInit(IHS_SessionRetransmission *retransmission, IHS_Session *session) {
     retransmission->session = session;
@@ -135,26 +127,93 @@ bool IHS_RetransmissionQueue(IHS_SessionRetransmission *retransmission, IHS_Sess
     return true;
 }
 
+/*
+ * What one ACK does to the pending packets of its channel. The queue has no walk-with-side-effects
+ * call, so the predicate does the marking itself (it runs under the lock) and always answers
+ * "no match": one pass, no allocation, O(pending).
+ */
+typedef struct AckScan {
+    IHS_SessionChannelId channelId;
+    uint16_t packetId;
+    uint16_t fragmentId;
+    bool cumulative;
+    bool exactFound;
+    uint8_t exactRetransmitCount;
+    uint32_t exactSendTimestamp;
+    uint32_t covered;
+} AckScan;
+
+static bool RetransmissionAckScanPredicate(PendingRetransmission *item, void *context) {
+    AckScan *scan = context;
+    if (item->acked || item->packet.header.channelId != scan->channelId) {
+        return false;
+    }
+    // Ids wrap at 65536: "up to n" is a signed 16-bit distance, good for any pending packet,
+    // which is never more than ~12 s (a few hundred ids) old.
+    int16_t behind = (int16_t) (uint16_t) (item->packet.header.packetId - scan->packetId);
+    if (behind == 0 && item->packet.header.fragmentId == (int16_t) scan->fragmentId) {
+        item->acked = true;
+        scan->exactFound = true;
+        scan->exactRetransmitCount = item->packet.header.retransmitCount;
+        scan->exactSendTimestamp = item->packet.header.sendTimestamp;
+    } else if (scan->cumulative && behind <= 0) {
+        item->acked = true;
+        scan->covered++;
+    }
+    return false;
+}
+
 bool IHS_RetransmissionCancel(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId,
                               uint16_t packetId, uint16_t fragmentId) {
-    RetransmissionQuery query = {
+    return IHS_RetransmissionAck(retransmission, channelId, packetId, fragmentId, false);
+}
+
+bool IHS_RetransmissionAck(IHS_SessionRetransmission *retransmission, IHS_SessionChannelId channelId,
+                           uint16_t packetId, uint16_t fragmentId, bool cumulative) {
+    AckScan scan = {
             .channelId = channelId,
             .packetId = packetId,
             .fragmentId = fragmentId,
+            .cumulative = cumulative,
     };
+    uint32_t logReceived = 0, logCovered = 0, logNone = 0;
+    bool logNow = false;
     IHS_MutexLock(retransmission->lock);
-    PendingRetransmission *match = IHS_QueueFindBy(retransmission->queue, RetransmissionPacketPredicate, &query);
-    uint8_t retransmitCount = 0;
-    uint32_t sendTimestamp = 0;
-    if (match != NULL) {
-        match->acked = true;
-        retransmitCount = match->packet.header.retransmitCount;
-        sendTimestamp = match->packet.header.sendTimestamp;
+    IHS_QueueFindBy(retransmission->queue, RetransmissionAckScanPredicate, &scan);
+    if (channelId < IHS_RETRANSMISSION_ACK_CHANNELS) {
+        IHS_SessionRetransmissionAckStats *stats = &retransmission->ackStats[channelId];
+        stats->received++;
+        stats->covered += scan.covered;
+        if (!scan.exactFound && scan.covered == 0) {
+            stats->noPending++;
+        }
+        uint32_t now = (uint32_t) IHS_TimerNow();
+        if ((int32_t) (now - stats->lastLogMs) >= 1000) {
+            logNow = true;
+            logReceived = stats->received;
+            logCovered = stats->covered;
+            logNone = stats->noPending;
+            stats->received = stats->covered = stats->noPending = 0;
+            stats->lastLogMs = now;
+        }
     }
     IHS_MutexUnlock(retransmission->lock);
-    if (match == NULL) {
-        return false;
+    IHS_Session *session = retransmission->session;
+    if (scan.covered > 0) {
+        IHS_SessionCounterAdd(session->counters.ackCumulativeCancels, scan.covered);
     }
+    if (logNow) {
+        // Logged outside the lock. Lets a Debug log show whether Steam answers each packet or only
+        // the newest of a burst: "covered" counts packets that were cancelled by a later id.
+        IHS_SessionLog(session, IHS_LogLevelDebug, "Retransmission",
+                       "ACKs ch%u: %u received, %u packets covered by a later id, %u with nothing pending",
+                       channelId, logReceived, logCovered, logNone);
+    }
+    if (!scan.exactFound) {
+        return scan.covered > 0;
+    }
+    uint8_t retransmitCount = scan.exactRetransmitCount;
+    uint32_t sendTimestamp = scan.exactSendTimestamp;
     int32_t sample = (int32_t) (IHS_SessionPacketTimestamp() - sendTimestamp);
     if (retransmitCount == 1 && sample >= 0) {
         // Sent once (the queued copy counts 1), so the ACK can only be for that send. Smoothed
@@ -234,10 +293,4 @@ static void RetransmissionTimerEnd(void *context) {
 static bool RetransmissionIdenticalPredicate(PendingRetransmission *item, void *context) {
     return item == context;
 }
-
-static bool RetransmissionPacketPredicate(PendingRetransmission *item, void *context) {
-    RetransmissionQuery *query = context;
-    return !item->acked && item->packet.header.channelId == query->channelId &&
-           item->packet.header.packetId == query->packetId &&
-           item->packet.header.fragmentId == query->fragmentId;
 }
